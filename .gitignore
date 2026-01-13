@@ -208,3 +208,6 @@ marimo/_lsp/
 __marimo__/
 
 ais/
+grid_autoencoder_runs/
+*.npy
+*.pth
