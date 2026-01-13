@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import argparse
 import os
+from datetime import datetime
 
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
+from torch.utils.tensorboard import SummaryWriter
 
 from .dataset import collect_rollouts, load_rollouts, save_rollouts, GridRolloutDataset
 from .model import GridAutoencoder
@@ -21,7 +23,8 @@ def train(
     epochs: int,
     lr: float,
     device: str,
-    output_dir: str,
+    model_dir: str,
+    log_dir: str,
 ):
     dataset = GridRolloutDataset(observations)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
@@ -30,10 +33,13 @@ def train(
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     criterion = torch.nn.MSELoss()
 
-    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(model_dir, exist_ok=True)
+
+    writer = SummaryWriter(log_dir=log_dir)
 
     for epoch in range(1, epochs + 1):
         losses = []
+        global_step = (epoch - 1) * len(loader)
         for batch in loader:
             batch = batch.to(device)
             recon = model(batch)
@@ -42,13 +48,17 @@ def train(
             loss.backward()
             optimizer.step()
             losses.append(loss.item())
+            writer.add_scalar("train/batch_loss", loss.item(), global_step)
+            global_step += 1
 
         avg_loss = float(np.mean(losses)) if losses else 0.0
         print(f"Epoch {epoch}/{epochs} loss={avg_loss:.6f}")
+        writer.add_scalar("train/epoch_loss", avg_loss, epoch)
         if epoch % 10 == 0:
-            torch.save(model.state_dict(), os.path.join(output_dir, f"autoencoder_ep{epoch}.pth"))
+            torch.save(model.state_dict(), os.path.join(model_dir, f"autoencoder_ep{epoch}.pth"))
 
-    torch.save(model.state_dict(), os.path.join(output_dir, "autoencoder_final.pth"))
+    torch.save(model.state_dict(), os.path.join(model_dir, "autoencoder_final.pth"))
+    writer.close()
 
 
 def main():
@@ -69,7 +79,14 @@ def main():
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--device", default="cpu")
+    parser.add_argument("--log_dir", default=None)
     args = parser.parse_args()
+
+    run_id = f"{args.env_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    run_dir = os.path.join(args.output_dir, run_id)
+    data_dir = os.path.join(run_dir, "data")
+    model_dir = os.path.join(run_dir, "models")
+    log_dir = args.log_dir or os.path.join(run_dir, "tb")
 
     if args.dataset_path:
         observations = load_rollouts(args.dataset_path)
@@ -85,7 +102,8 @@ def main():
             view_radius=args.view_radius,
             wall_density=args.wall_density,
         )
-        dataset_path = os.path.join(args.output_dir, f"{args.env_name}_rollouts.npy")
+        os.makedirs(data_dir, exist_ok=True)
+        dataset_path = os.path.join(data_dir, "rollouts.npy")
         save_rollouts(dataset_path, observations)
 
     if args.collect_only:
@@ -100,7 +118,8 @@ def main():
         epochs=args.epochs,
         lr=args.lr,
         device=args.device,
-        output_dir=args.output_dir,
+        model_dir=model_dir,
+        log_dir=log_dir,
     )
 
 

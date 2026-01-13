@@ -137,6 +137,8 @@ class CompetitiveGridEnv(AECEnv):
         self.terminations = {agent: False for agent in self.agents}
         self.truncations = {agent: False for agent in self.agents}
         self.infos = {agent: {} for agent in self.agents}
+        self._cumulative_rewards = {agent: 0.0 for agent in self.agents}
+        self._clear_rewards()
 
     def _build_layout(self, cfg: EnvConfig) -> None:
         self._walls = np.zeros((cfg.height, cfg.width), dtype=bool)
@@ -314,6 +316,7 @@ class CompetitiveGridEnv(AECEnv):
             if self._steps >= self.config.max_steps and not any(self.terminations.values()):
                 self.truncations = {a: True for a in self.agents}
 
+        self._accumulate_rewards()
         self.agent_selection = self._agent_selector.next()
         self._history.append(self._snapshot_positions())
 
