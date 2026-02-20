@@ -13,7 +13,7 @@ def test_observation_shape_and_visibility():
     env.reset(seed=0)
 
     obs = env.observe(env.agent_selection)
-    assert obs.shape == (3, 3, 4)
+    assert obs.shape == (3, 3, 5)
     assert obs.dtype == np.float32
     assert obs[1, 1, 3] == 1.0
 

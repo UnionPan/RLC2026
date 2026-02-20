@@ -6,7 +6,7 @@
 # Arguments:
 #   ENVIRONMENT: competitive_fourrooms, competitive_obstructedmaze,
 #                cooperative_keycorridor, cooperative_lavacrossing, pursuit_evasion
-#   ALGORITHM:   reinforce, a2c, ppo, mappo, qmix
+#   ALGORITHM:   reinforce, a2c, ppo
 #
 # Options:
 #   --episodes N     Number of evaluation episodes (default: 100)
@@ -65,7 +65,7 @@ if [[ ! " $VALID_ENVS " =~ " $ENV " ]]; then
 fi
 
 # Validate algorithm
-VALID_ALGOS="reinforce a2c ppo mappo qmix"
+VALID_ALGOS="reinforce a2c ppo"
 if [[ ! " $VALID_ALGOS " =~ " $ALGO " ]]; then
     echo "Error: Invalid algorithm '$ALGO'"
     echo "Valid algorithms: $VALID_ALGOS"

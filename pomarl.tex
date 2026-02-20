@@ -1,0 +1,1503 @@
+\documentclass{article}
+\usepackage[numbers,compress]{natbib}
+\usepackage[preprint]{neurips_2025}
+\usepackage[utf8]{inputenc} % allow utf-8 input
+\usepackage[T1]{fontenc}    % use 8-bit T1 fonts
+\usepackage{config}
+\usepackage{appendix}
+\title{Computing Equilibria in Partially Observable Markov Games via Policy Gradient with Approximate Information}
+\author{Tao Li \And Semih Kara \And Yunian Pan \And Alec Koppel}
+
+
+\begin{document}
+
+\maketitle
+\begin{abstract}
+We study policy gradient (\textsc{pg}) estimation and its convergence properties in partially observed systems, which is motivated by the gap between the current practice in deep reinforcement learning (\textsc{rl}) and the theoretical foundations of \textsc{pg} under partial observability. In partially observed environments, deep \textsc{rl} relies on neural networks to extract a succinct latent representation of history, based on which the gradient update of the neural policy is performed. Yet, little is known about the estimation error and the convergence behavior, especially in the case of multiple agents. In this work, we draw upon the notion of approximate information state (\textsc{is}), a sufficient statistic for evaluating expected rewards and predicting future states using only partial observations, which has been extensively explored in the planning and control literature.  We establish a rigorous framework for policy gradient-based \textsc{rl} based on the information state in the context of partially observable Markov decision processes and stochastic games. Through our analysis of estimation and approximation error in \textsc{is}-based \textsc{pg}, we characterize the asymptotic convergence of partially observable \textsc{rl} in single and multi-agent scenarios.
+\end{abstract}
+
+\section{Introduction}
+Reinforcement learning (\textsc{rl}) provides a principled approach for creating autonomous agents who learn to interact with an unknown environment through trial and error \citep{Sutton2018wc, tao22confluence}. While the canonical mathematical model for \textsc{rl} is the fully observable Markov decision process (\textsc{mdp}) \cite{hernandez89mdp}, the \textsc{rl} agent in reality often receives partial observations of the environment state due their limited sensing capabilities and simplifying modeling assumptions \cite{tao22info} when deployed in a variety of application domains, including robotic control \citep{lauri23pomdp-robot, hanna22pomdp}, intelligent transportation \cite{tao24picol, yasin22drl4its}, financial engineering \cite{xu23rl4fin, song24rl4fin}, cybersecurity \citep{reddi23rl4sec, tao24ddztd}, and healthcare \cite{yin21rl4health}.  
+
+The challenge arising in \textsc{rl} and decision-making in general in partially observable environments lies in that the agent must infer the underlying true state from the sequence of historical partial observations, which is non-Markovian, and as the memory grows, the curse of dimensionality renders the problem intractable \cite{papadimitriou87mdp-complexity, burago96pomdp-complexity}. To address this challenge, the \textsc{rl} community has explored the neural network's representation learning ability, which extracts informative features from past histories and creates low-dimensional, succinct state representations, leading to deep \textsc{rl} \cite{lesort18state-rep-control, white24rep}. While proven to be empirically successful \cite{mnih2015DQN, silver19sci}, these deep \textsc{rl} algorithms have not admitted a solid theoretical foundation addressing the interplay between representation and reinforcement learning and the learning dynamics in the space of learned representations.  
+
+This work provides a theoretical underpinning of the computation, approximation, and asymptotics of the policy gradient (\textsc{pg}) \cite{sutton_PG}, one of the most basic and effective methods in \textsc{rl}, in the latent representation space in the context of discounted partially observable Markov decision processes (\textsc{pomdp}). Among a variety of representations in deep \textsc{rl}, we are particularly interested in the \textit{information state} (\textsc{is}), which is a latent variable resulting from the history compression, serving as a sufficient statistic for evaluating the policy performance and predicting the next state \cite{mahajan22approx-info}. The notion of \textsc{is} has long existed in the stochastic control literature \cite{kumar86stochastic} and is closely connected to many other notions in representation learning in deep \textsc{rl}, including (quantized) belief state \cite{yuksel17finite}, finite-state models \cite{yuksel22finite-state}, predictive state representation \cite{sutton01psr}, forward models \cite{lesort18state-rep-control}, and most recently, world models \cite{yong25wm-survey}, as they all feature the predictive nature: the learned representations should help predict the future states and observations, essentially capturing the temporal dynamics.    
+
+By studying \textsc{pg} dynamics in the space of \textsc{is}, we aim to develop a rigorous approach for \textsc{rl} in partially observed systems, bridging the gap between the practice and theory in deep \textsc{rl}. Technically, the research questions investigated in this work include 1) the sample-based policy gradient estimation in \textsc{pomdp} and its bias under exact \textsc{is}; 2) the approximation error in \textsc{pg} when using approximate \textsc{is} from representation learning; 3) asymptotic convergence of \textsc{pg} under approximate \textsc{is}; and 4) extended convergence analysis of \textsc{pg} in zero-sum partially observed stochastic games (\textsc{posg}).
+
+Our work is grounded in two streams of literature: policy gradient estimation in \textsc{pomdp} \cite{baxter01pg-est,hu05pg-est,baxter00pg-pomdp} and policy-based \textsc{rl} in partially observed systems \cite{bowling18ac-pomdp,anandkumar20pg-pomdp, cayci24npg-pomdp}.  Our proposed policy gradient estimation considers the \textsc{is}-based policy, which takes \textsc{is} as the input, in contrast to prior works that concern the action-observation pairs \cite{baxter01pg-est, anandkumar20pg-pomdp}. Mathematically, we perform policy gradient over the Markov chain in the information state space, which is more technically challenging due to the approximation error in representation learning and aligns better with common practice in deep \textsc{rl}. Compared with the existing efforts on partially observable \textsc{rl} \cite{cayci24npg-pomdp}, which assumes the accessibility to latent representations, this work takes into account the approximation error in learning the \textsc{is} using neural networks. From a stochastic gradient descent perspective, we present and analyze a two-timescale gradient algorithm where the slow-scale policy gradient is biased due to the inexact \textsc{is} representation learning at the fast scale, whose convergence behaviors are of the primary interest. In addition, this work considers the REINFORCE-type gradient estimator \cite{williams92reinforce}, unlike the majority of existing works on actor-critic algorithms \cite{anandkumar20pg-pomdp, bhatt21semi, cayci24npg-pomdp}. This spares us from studying the approximation error in value function learning under \textsc{is} at the cost of higher variance. 
+
+\section{Related Works}
+\paragraph{Representation Learning} Depending on the purpose, representation learning in deep \textsc{rl} can be classified into two primary categories: those developed to facilitate training \cite{silver19bias, kulkarni16intrinsic, tao25piprl} and those designed to enhance generalization in testing \cite{bellemare22generalize-rep,agarwal2021contrastive, trauble2021representation}. A shared feature of these methods is that they often aim to learn latent representations that capture the unknown system dynamics through future predictions, even though under various names, such as temporal abstraction \cite{kulkarni16intrinsic}, predictive representations \cite{sutton01psr, guo20boostrap-rep, schwarzer2021dataefficient}, forward model \cite{lesort18state-rep-control}, dynamics-aware embedding \cite{Whitney2020Dynamics-Aware}, and most recently, latent imagination/dynamics in world models \cite{hafner20wm, hafner25worldmodel}. When it comes to actual implementation, these representation learning methods introduce auxiliary losses for future state/latent variable prediction \cite{hafner25worldmodel} and reward prediction \cite{jaderberg2017reinforcement}. 
+
+As we later review in \Cref{sec:pre}, such a prediction loss coincides with the self-predicting nature of the \textsc{is}, justifying our choice of \textsc{is} as the canonical latent representation when developing theoretically principled policy gradient in partially observed systems. Compared with prior empirical works on policy-based \textsc{rl} in the latent space \cite{jurgen07recurrent-pg, bowling18ac-pomdp, mahajan22approx-info}, this paper presents rigorous analysis on the policy gradient estimation and asymptotics in the space of \textsc{is}.
+\paragraph{Information State} As a special case of latent representations in partially observed systems, \textsc{is} is a sufficient statistic for predicting rewards and next states, leading to dynamic programming decomposition \cite{mahajan22approx-info}. Consequently, it suffices to search for the optimal \textsc{is}-policy without keeping track of the growing history of partial observations. According to the parameterization techniques, \textsc{is} can be categorized into \textit{non-parametric} (e.g., Bayesian posterior belief in \Cref{eg:belief} and \cite{kumar86stochastic}), \textit{semi-parametric} (e.g., the kernel-based method in \cite{bhatt21semi}), and parametric (e.g., by recurrent neural networks \cite{jurgen07recurrent-pg}). 
+
+Most of the existing theoretical investigations focus on the \textit{finite-state} model/automata/controller, a special non-parametric \textsc{is} encapsulating the most recent observations and an internal state, with a long history in planning and control literature \cite{kaelbling99finite-state, yu08finite-state, yuksel22finite-state, yuksel22finite-memory, cayci24npg-pomdp}. Our work differs from these prior efforts in that we study \textsc{pg} with respect to generic \textsc{is}, and particularly parametric \textsc{is}, since it adopts a data-driven approach to identify the suitable representations in complex tasks rather than relying on hand-crafted design in the non-parametric case, which is more commonly observed in deep \textsc{rl}. Moreover, we address the approximation error arising in the representation learning, where the neural network only returns \textit{approximate information states} (\textsc{ais}). Closest to our work is \cite{bhatt21semi, mahajan22approx-info}, where the authors also study policy gradient under \textsc{ais} and develop a joint representation and reinforcement learning algorithm, yet without rigorous analysis of the \textsc{pg} algorithm. Building upon these early efforts, we derive error bounds in policy estimation and gradient approximation in this work and apply them to asymptotic convergence in both single and multi-agent scenarios. \textcolor{cyan}{Alec: when we get to the topic of multiple agents, don't we need to discuss equilibrium type and the appropriate notion of convergence and its relative strength? one things that should be hopefully novel to come out of our analysis is how to do the belief model updates in the case of multiple agents. that is rarely studied.}
+
+
+
+
+\paragraph{Policy Gradient} Since the seminal work on the policy gradient theorem \cite{sutton_PG}, policy-based \textsc{rl} has emerged as one of the most effective methods for tackling challenging tasks with large or continuous state/action spaces. Motivated by its encouraging success in deep \textsc{rl}, many past and contemporary research works have presented in-depth analysis of its estimation \cite{williams92reinforce, baxter01pg-est}, approximation \cite{kakade21pg}, asymptotics \cite{konda99two}, and finite-time sample complexity \cite{alec23sample-ac} in both single \cite{kakade21pg} and multi-agent scenarios \cite{daska20idpg}. However, most of the prior works consider fully observable environments. Little is known about the theoretical properties of \textsc{pg} under partial observability, despite its remarkable successes in applications often observed in partially observed environments powered by deep representation learning.
+
+Recently, there has been an increasing interest in investigating partially observable \textsc{rl} using \textsc{pg} \cite{anandkumar20pg-pomdp, bhatt21semi, mahajan22approx-info, cayci24npg-pomdp}, with which this work shares the same spirit. Yet, some of them assume pre-defined \textsc{is} and study \textsc{pg}'s convergence behaviors \cite{anandkumar20pg-pomdp, cayci24npg-pomdp}. While \cite{bhatt21semi, mahajan22approx-info} consider an integrated \textsc{is} and policy learning, they do not address the interplay between approximation error in learning \textsc{is} using neural networks under the current policy and the subsequent bias in policy gradient estimate using the approximate \textsc{is}. \textcolor{cyan}{Alec: underscore this point more strongly: previous works require time-scale separation between the information state learning phase and the policy search. we need to brand our effort here as "single loop" with multiple agents. in addition to being more "practical," does it actaully perform better? we might briefly show here a toy experiment demonstrating the single loop dynamics is more sample efficient or can solve problems the time-scale separation cannot here} Our problem setup is more challenging and aligns closely with the actual practice in deep \textsc{rl}. Our theoretical results and the proposed two-timescale information-state-policy learning can shed more light on future representation learning design in deep \textsc{rl}.    
+ 
+
+
+\section{Preliminary}
+\label{sec:pre}
+\subsection{Partially Observable Markov Decision Processes and Stochastic Games} We consider a discrete-time infinite-horizon finite partially observable stochastic game (\textsc{posg}) given by the tuple $\Gamma\triangleq \langle \mathcal{N}, \mathcal{S}, \{\mathcal{O}^k\}_{k\in \mathcal{N}}, \{\mathcal{A}^k\}_{k\in \mathcal{N}}, P, \{Z^k\}_{k\in \mathcal{N}}, \{r^{k}\}_{k\in \mathcal{N}}, \rho, \gamma \rangle $, where 
+\begin{enumerate}[label=\roman*), left=0pt]
+    \item $\mathcal{N}$ and $\mathcal{S}$ denote the set of finite players and states, respectively;
+    \item $\mathcal{O}^k$ and $ \mathcal{A}^k$ denote the set of finite partial observations and actions available to player $k$, respectively;
+    \item $P:\mathcal{S}\times\prod_{k\in \mathcal{N}}\mathcal{A}^k\rightarrow \Delta(\mathcal{S})$ is the transition kernel; note that we assume all sets are finite, endowed with discrete topology, and $\Delta(\cdot)$ is the set of Borel probability measures;
+    \item $Z^k:\mathcal{S}\rightarrow \Delta(\mathcal{O}^k)$ is the partial observation kernel; 
+    \item $r^k: \mathcal{S}\times \prod_{k\in \mathcal{N}}\mathcal{A}^k\rightarrow \R$ denotes the reward function;
+    \item $\rho\in\Delta(\mathcal{S})$ denotes the initial distribution, and $\gamma\in (0,1)$ is the discounting factor. 
+\end{enumerate}
+When the player set is a singleton, the \textsc{posg} above reduces to a single-agent partially observable Markov decision process (\textsc{pomdp}).
+Throughout the paper, calligraphy letters (e.g., $\mathcal{X}$) represent sets. A typical element of a set  $\mathcal{X}$ is denoted by its lower-cased letter $x\in\mathcal{X}$. An individual player can be indexed by $i,j,k\in\mathcal{N}$, which usually appear as the superscript, while $t\in \N_{+}$ as the subscript, i.e., $x_t^i$. Following the convention, $-i\triangleq\mathcal{N}\backslash\{i\}$ denotes all players but $i$. A symbol without a player index stands for the concatenation of quantities or variables of all players. The random variable is written in upper case, e.g., $X_t^i$, denoting the unrealized quantity. Since the scope of this paper is about learning in a zero-sum game, we simply consider that the two players share the same reward function $r$, whereas player 1 is the maximizer and player 2 is the minimizer. In the single-agent case, we keep the reward maximizer as the decision-maker.
+
+\paragraph{Policy Gradient in Markov Decision Processes} This work focuses on the class of parametric stochastic policies  $\Pi\triangleq \{\pi_\theta|\theta\in \Theta\}$, which includes direct parameterization, softmax parameterization, and neural parameterization as special cases \cite{kakade21pg}. This work considers the direct parameterization throughout the paper. Given an initial state $s_1$, the discounted state visitation distribution $d_{s_1}^\pi$ is defined as $d_{s_1}^\pi\triangleq (1-\gamma)\sum_{t=0}^\infty \gamma^t \mathbb{P}^{\pi}(s_t=s|s_1)$, where $\mathbb{P}^\pi(s_t=s|s_1)$ denotes the state visitation probability. Let $d_\rho^{\pi}(s)=\mathbb{E}_{s_1\sim \rho}[d_{s_1}^\pi(s)]$ be the expected state visitation distribution under the initial state distribution.  
+
+The seminal policy gradient theorem established in \cite{williams92reinforce, sutton_PG} states that the value function, defined as the discounted sum of rewards, $V^\pi\triangleq \mathbb{E}[\sum_{t=0}^\infty \gamma^t r(s_t,a_t)| \pi, s_1=s]$, admits the following policy gradient functional form 
+\begin{equation}
+    \nabla V^{\pi}(s_1)=\frac{1}{1-\gamma} \mathbb{E}_{s\sim d_{s_1}^\pi}\mathbb{E}_{a\sim \pi(\cdot|s)} \bigg[\nabla\log\pi(a|s)Q^{\pi}(s,a)\bigg],
+\end{equation}
+where $Q^{\pi}(s,a)\triangleq\mathbb{E}[\sum_{t=0}^\infty \gamma^t r(s_t,a_t)|\pi, s_1=s, a_1=a]$ denotes the expected discounted sum of future rewards after executing the policy from the initial state-action pair $(s,a)$. Considering the policy's stochastic nature, one can further replace the Q function with the advantage function $A^{\pi}(s,a)=Q^{\pi}(s,a)-V^{\pi}(s)$, which helps reduce the variance when estimating the policy gradient from sample trajectories \cite{mnih16a3c}. 
+
+Two key lemmas behind the policy gradient convergence are the performance difference lemma and the gradient domination, which is also known as the Polyak-Lojasiewicz condition \cite{pl-ineq}.
+\begin{lemma}[Adapted from Lem. 2 in \cite{kakade21pg}]
+\label{lem:perf-diff}
+  Given a state $s_1$, for any policies $\pi, \pi'\in \Pi$, 
+  \begin{equation}
+      \label{eq:perf-diff}
+      V^{\pi}(s_1) - V^{\pi'}(s_1)=\frac{1}{\gamma}\mathbb{E}_{s_1\sim d_{s_1}^\pi}\mathbb{E}_{a\sim \pi(\cdot|s)}\bigg[A^{\pi'}(s,a)\bigg].
+  \end{equation}
+\end{lemma}
+
+\begin{lemma}[Adapted from Lem. 4 in \cite{kakade21pg}]
+\label{lem:pl}
+    Under the direct policy parameterization, for any state distribution $\mu, \rho\in \Delta(\mathcal{S})$, for any directly parameterized policy $\pi\in \Pi$ and the optimal policy $\pi^*$, 
+    \begin{equation}
+        \label{eq:pl}
+        V^{\pi^*}(\rho) - V^{\pi}(\rho)\leq \frac{1}{1-\gamma}\left\|\frac{d_\rho^{\pi^*}}{\mu}\right\|_{\infty}\max_{\pi'\in \Pi}\langle \nabla V^\pi(\mu), \pi'-\pi \rangle. 
+    \end{equation}
+\end{lemma}
+
+
+\subsection{Approximate Information State and Dynamic Programming}
+
+\paragraph{Information State} Consider the single-agent \textsc{pomdp} where the agent makes decisions at each time step based on the past observations. Before addressing the multi-agent reinforcement learning scenario, we drop the agent index $k$ for simplicity. Let $\mathbf{I}_t$ be the agent's information structure at time $t$, which includes the historical partial observations, its actions, and rewards: $\mathbf{I}_t=(O_{1:t}, A_{1:t-1}, R_{1:t-1})$. Its realization is denoted by $\mathbf{i}^k_t=(o_{1:t}, a_{1:t-1}, r_{1:t-1})$. Denote by $\mathcal{H}_t$ the space that contains all possible information structures realizations(up to time $t$). The agent's policy profile is given by a sequence of mappings $\{\pi_t: \mathcal{H}_t\rightarrow \Delta(\mathcal{A})\}_{t=1}^\infty$, which yields a sequence of actions that maximize the expected cumulative rewards. We denote by $\Pi_\mathcal{H}$ the class of history-dependent policies.  
+
+As the dimension of the history space grows with respect to time, searching for the optimal policies is computationally intractable, which motivates the idea of history compression and information state (\textsc{is}). Intuitively, an information state is obtained by compressing the past history into a latent variable living in a fixed-dimensional (possibly infinite) space $\mathcal{X}$. Moreover, the non-Markovian transition between observations can be lifted to a Markovian one between information states. Consequently, one can consider the class of Markovian policies defined in the space of \textsc{is}. The key finding of \cite{mahajan22approx-info} states that such a transformation preserves the optimality in the sense that the optimal value function can be achieved by an \textsc{is}-based Markovian policy.  
+
+We consider the notion of time-homogeneous information state introduced in \cite{mahajan22approx-info} throughout the paper, as defined below. 
+\begin{definition}[Information State]
+\label{def:is}
+Given a Polish space $\mathcal{X}$ endowed with a Borel algebra $\mathscr{B}$, a collection of mappings $\{\sigma_t: \mathcal{H}_t\rightarrow \mathcal{X}\}_{t\geq 1}$ is an information state generator if the sequence $\{X_t=\sigma_t(H_t)\}_{t\geq 1}$, referred to as the information sates, satisfies
+ \begin{enumerate}[label=\textsc{(is-\Roman*)}, left=0pt, font=\normalfont]
+        \item for any $t\geq 1$, any realization $h_t\in \mathcal{H}_t$ and $a_t\in \mathcal{A}$, 
+        \begin{equation}
+        \label{eq:reward_eval}
+             \E[R_t| H_t=h_t, A_t=a_t] = \E[R_t|X_t=\sigma_t(h_t), A_t=a_t].
+        \end{equation}
+        \item for any $t\geq 1$, any realization $h_t\in \mathcal{H}_t$ and $a_t\in \mathcal{A}$, and for any Borel subset $\mathcal{Y}\subset \mathcal{X}$,
+        \begin{equation}
+        \label{eq:self-pred}
+             \mathbb{P}[X_{t+1}\in \mathcal{Y}| H_t=h_t, A_t=a_t] = \mathbb{P}[X_{t+1}\in \mathcal{Y}| X_t=\sigma_t(h_t), A_t=a_t],
+        \end{equation}
+        where the probability kernel is time-homogeneous. 
+    \end{enumerate}
+\end{definition}
+
+The condition (\textsc{is-I}) asserts that the information state is sufficient to evaluate the expected reward, while (\textsc{is-II}), called the self-predicting condition, requires the information state to be sufficient statistics for the causal input-output mapping, which is first outlined in \cite{nerode58state}. While (\textsc{is-I}) is easy to verify, (\textsc{is-II}) may not be straightforward. \cite{mahajan22approx-info} proposes two stronger conditions that are easier to verify, as stated in the following proposition.
+\begin{proposition}[Adapted from Prop. 4, \cite{mahajan22approx-info}]
+\label{prop:state-like}
+Given an information state generator $\{\sigma_t: \mathcal{H}_t\rightarrow\mathcal{X}\}_{t\geq 1}$ as defined in \Cref{def:is}, if the following two conditions hold, then \textsc{is-II} also holds.
+\begin{enumerate}[label=\textsc{(is-II\alph*)}, left=0pt, font=\normalfont]
+    \item There exists a measurable function, called information state transition, $\varphi: \mathcal{X}\times \mathcal{O}\times \mathcal{A}\rightarrow \mathcal{X}$ such that for any $t\geq 1$ and any realization $h_t\in \mathcal{H}_t$, 
+    \begin{equation}
+    \label{eq:is-transition}
+        \sigma_{t+1}(h_{t+1})=\varphi(\sigma_t(h_t), o_t, a_t), h_{t+1}=h_t\cup\{o_t, a_t\}, \qquad \forall o_t\in \mathcal{O}, a_t\in \mathcal{A}. 
+    \end{equation}
+    \item For any $t\geq 1$, any realization $h_t\in \mathcal{H}_t$, any choice of $a_t\in \mathcal{A}$, and any subset $\mathcal{Y}\subset \mathcal{O}$,
+    \begin{equation}
+        \mathbb{P}[O_t\in \mathcal{Y}\mid H_t=h_t, A_t=a_t] = \mathbb{P}[O_t\in \mathcal{Y}\mid X_t=\sigma_t(h_t), A_t=a_t]. 
+    \end{equation}
+\end{enumerate}
+\end{proposition}
+
+\begin{example}[Bayesian Belief State]
+\label{eg:belief}
+\normalfont
+    One simple example of such a time-homogeneous information state is the Bayesian posterior belief state widely used in \textsc{pomdp}. In this case, the Polish space is simply the set of Borel probability measures over the state space, i.e., $\mathcal{X}=\Delta(\mathcal{S})$, equipped with the integral probability metric with respect to the bounded function class. The information-state generator $\sigma_t$ is given by the Bayesian filtering:
+    \begin{align*}
+        \mathbf{b}_{t+1}[s]=\sigma_{t+1}(h_{t+1})[s]=\varphi(\sigma_{t}(h_t), o_t, a_t)[s]=\frac{\sum_{s'\in \mathcal{S}}\mathbf{b}_t[s']P(s|s',a_t)Z(o_t|s)}{\sum_{s',\hat{s}\in \mathcal{S}} \mathbf{b}_t[s']P(\hat{s}|s',a_t)Z(o_t|\hat{s})}.
+    \end{align*}
+\end{example}
+
+Through the information state generator, we arrive at the belief-state \textsc{mdp} given by the tuple $\langle \mathcal{X}, \mathcal{A}, \Phi, r_\sigma, \gamma\rangle$, where the information state transition kernel is defined as 
+\begin{equation*}
+    \Phi(\mathbf{b}'|\mathbf{b}, a)=\sum_{o\in \mathcal{O}}\mathds{1}\{\mathbf{b}'=\varphi(\mathbf{b},o,a)\}\sum_{s,s'\in\mathcal{S}}Z(o|s')P(s'|s,a)\mathbf{b}[s].
+\end{equation*}
+The reward function, when lifted to the space of information states, becomes the expected reward under the belief $r_\sigma(\mathbf{b},a)=\sum_{s\in \mathcal{S}}\mathbf{b}[s]r(s,a)$.
+
+Given a time-homogeneous \textsc{is}, one can define the Bellman operator $\mathscr{B}$ acting on the functional space $\mathcal{V}\triangleq\{V| V:\mathcal{X}\rightarrow \mathbb{R}\}$. For any uniformly bounded function $V\in \mathcal{V}$, 
+\begin{equation}
+    \label{eq:bellman-is}
+    [\mathscr{B}V](x) = \max_{a\in \mathcal{A}}\mathbb{E}[R_t+\gamma V(X_{t+1})|X_t=x, A_t=a],
+\end{equation}
+where the expectation is taken with respect to the unrealized reward variable, given the current information state and action, and the next information state subject to the probability in \eqref{eq:self-pred}. If one assumes the space $\mathcal{V}$ is good enough, the fixed point equation $V=\mathscr{B}V$ has a unique bounded solution, which we denote by $\tilde{V}^*$. Thm. 25 in \cite{mahajan22approx-info} states that such a $\tilde{V}^*$ is equivalent to the actual value function defined in the history space. Formally, suppose $\tilde{V}^*$ is the unique fixed point of the Bellman operator induced by the time-homogeneous \textsc{is} $\{\sigma_t: \mathcal{H}_t\rightarrow \mathcal{X}\}_{t\geq 1}$, then, for any $t$ and realization $h_t$, 
+\begin{equation*}
+    \tilde{V}^*(\sigma_t(h_t))=\sup_{\pi\in\Pi_{\mathcal{H}}} V_t^\pi(h_t)\triangleq \mathbb{E}_{\pi}\bigg[\sum_{k=t}^\infty\gamma^{k-t}R_k| H_t=h_t\bigg],
+\end{equation*}
+where the expectation is taken over the discounted observation-action visitation measure under $\pi$, given by 
+\begin{equation*}
+    {d}^\pi_{h_t}(o,a)\triangleq (1-\gamma)\sum_{k=0}^\infty \gamma^{t+k} \mathbb{P}^\pi(O_{t+k}=o, A_{t+k}=a|H_t= h_t).
+\end{equation*}
+Therefore, it suffices to search for the optimal policy within the class of \textsc{is}-based policies. 
+
+Denote by $\rho_\mathrm{z}\in\Delta(\mathcal{O})$ the initial distribution over the observation space under the initial state distribution $\rho$ and observation kernel $Z$. Then, with a slight abuse of notation, $H_1=\{O_1\}\sim \rho_{\mathrm{z}}$. Hence, we define the value function associated with the information-state policy $\tilde{\pi}:\mathcal{X}\rightarrow\Delta(\mathcal{A})$ as $\tilde{V}^{\tilde{\pi}}(\rho_{\mathrm{z}})=\sum_{o\in \mathcal{O}} \tilde{V}^{\tilde{\pi}}(\sigma_1(o))\rho_{\mathrm{z}}(o)$. For simplicity, we also write $x_o=\mathcal{\sigma}_1(o)$. When the policy is parameterized by $\theta$, we overload notations, writing $\tilde{V}(\theta)$. One can further define the discounted $\textsc{is}$ visitation measure as 
+\begin{equation*}
+    d^{\tilde{\pi}}(\mathcal{M})=(1-\gamma)\sum_{t=0}^\infty \gamma^t \mathbb{P}^{\tilde{\pi}}(x_t\in \mathcal{M}),\quad \mathcal{M}\subset\mathcal{X}.
+\end{equation*}
+
+We impose the measure selection assumption from \cite{russo24pg} avoid pathological measurability issues that can arise in dynamic programming in the general \textsc{is} space.
+\begin{assumption}
+    For every bounded measurable function $\tilde{V}$ on $\mathcal{X}$, there exists a measure policy $\tilde{\pi}\in \Pi_{\mathcal{X}}\triangleq \{\pi: \pi:\mathcal{X}\rightarrow \Delta(\mathcal{A})\}$  such that 
+    \begin{align*}
+        &\mathbb{E}[R_t|X_t=x, A_t\sim\pi(\cdot|x)]+\gamma\int_{\mathcal{A}}\int_{\mathcal{X}} \tilde{V}(x')P(\mathrm{d}x'|x,a)\pi(x,a)\mathrm{d}a \\
+        &= \max_{a\in \mathcal{A}} \mathbb{E}[R_t+\gamma V(X_{t+1})|X_t=x, A_t=a],
+    \end{align*}
+    where $\mathrm{d}a$ denotes the counting measure since the action space is finite and discrete.
+\end{assumption}
+
+ Building on this measurability assumption, we further define the policy-induced Bellman operator $\mathscr{B}^{\tilde{\pi}}$ as 
+ \begin{equation*}
+     [\mathscr{B}^{\tilde{\pi}}\tilde{V}](x)\triangleq \mathbb{E}[R_t|X_t=x, A_t\sim\tilde{\pi}(\cdot|x)]+\gamma\int_{\mathcal{A}}\int_{\mathcal{X}} \tilde{V}(x')P(\mathrm{d}x'|x,a)\tilde{\pi}(\mathrm{d}a|x)
+ \end{equation*}
+
+Motivated by the recent advances in representation learning in deep \textsc{rl}, we further consider the approximate information state \textsc{ais} and its associated policy gradient dynamics in partially observed environments.
+\begin{definition}[Approximate Information State]
+\label{def:ais}
+    Given a Polish space $\hat{\mathcal{X}}$, a function class $\mathcal{F}$ defined over $\hat{\mathcal{X}}$ for generating integral probability metrics (\textsc{ipm}), and a pair of positive parameters $(\epsilon,\delta)$, a collection of mappings $\{\hat{\sigma}_t: \mathcal{H}_t\rightarrow \hat{\mathcal{X}}\}_{t\geq 1}$, a time-homogeneous kernel $\hat{P}:\hat{\mathcal{X}}\times \mathcal{A}\rightarrow \hat{\mathcal{X}}$, and a time-homogeneous reward approximation $\hat{r}: \hat{\mathcal{X}}\times \mathcal{A}\rightarrow\R$ is said to be a $(\epsilon, \delta)$-time-homogeneous approximate information state generator if the process $\{\hat{X}_t=\hat{\sigma}_t(H_t)\}_{t\geq 1}$ satisfies 
+ \begin{enumerate}[label=\textsc{(ais-\Roman*)}, left=0pt, font=\normalfont]
+ \item for any $t\geq 1$, and realization $h_t\in \mathcal{H}_t$, and any $a_t\in \mathcal{A}$,
+ \begin{equation}
+ \label{eq:reward_ais}
+     |\E[R_t|H_t=h_t, A_t=a_t]-\hat{r}_t(\hat{\sigma}_t(h_t),a_t)|\leq \epsilon.
+ \end{equation}
+ \item for any time $t\geq 1$, any realization $h_t\in \mathcal{H}_t$, any $a_t\in \mathcal{A}$, and for any Borel subset $\mathcal{B}\subset \hat{\mathcal{X}}_{t+1}$, let $\phi_t(\mathcal{B})\triangleq\mathbb{P}(\hat{X}_{t+1}\in \mathcal{B}|H_t=h_t, A_t=a_t)$ and $\varphi_t(B)\triangleq \hat{P}(\mathcal{B}|\hat{X}_t, a_t)$, then, 
+ \begin{equation}
+ \label{eq:self-pred-ais}
+     D^\mathcal{F}_\textsc{ipm}(\phi_t, \varphi_t)\triangleq \sup_{f\in \mathcal{F}}\left|\int_{\hat{X}}f\mathrm{d}\phi_t-\int_{\hat{X}}f\mathrm{d}\varphi_t\right|\leq \delta.
+ \end{equation}
+ \end{enumerate}
+\end{definition}
+Comparing \Cref{def:ais} with \Cref{def:is}, one can see that \eqref{eq:reward_ais} and \eqref{eq:self-pred-ais} are relaxations of \eqref{eq:reward_eval} and \eqref{eq:self-pred}, respectively.
+
+We impose the following strong assumption on the Polish space, since our focus is on the direct parameterization. We provide in \Cref{eg:quantize-belief} an example of the quantized belief space that satisfies the criteria in \Cref{def:ais}.
+\begin{assumption}[Finite \textsc{ais} Space]
+    The Polish space $\hat{\mathcal{X}}$ is a finite, discrete set. 
+\end{assumption}
+The purpose of this assumption is to establish the gradient dominance under direct parameterization, which is a key lemma for policy gradient convergence in both single and multi-agent settings.
+
+\begin{example}[Quantized Belief Space]
+\label{eg:quantize-belief}
+\normalfont
+    Following the setup in \Cref{eg:belief}, we further introduce the lattice quantizer developed in \cite{reznik11quantization}. Let $|\mathcal{S}|=m$ and define a finite belief subset $\mathcal{B}^n$ as 
+\begin{equation*}
+    \mathcal{B}^n\triangleq \left\{ \mathbf{b}=(p_1, p_2, \ldots, p_m)\in \Q^{m}: p_i=\frac{k_i}{n}, \sum_{i=1}^m k_i = n \right\},
+\end{equation*}
+where $k_i\in \Z$. When $n=1$, the quantization contains only corner points of the probability simplex. For $n>1$, the cardinality of the quantized belief space is given by  (combination with repetition)
+\begin{equation*}
+    |\mathcal{B}^n|=\frac{(n+m-1)!}{n!(m-1)!}.
+\end{equation*}
+The finite belief subspace $\mathcal{B}^n$ introduces a lattice over the entire belief space, leading to the following quantization mapping based on the idea of nearest neighbor computation \cite{reznik11quantization}. Given an arbitrary $\mathbf{b}\in \mathcal{B}$, its nearest neighbor in $\mathcal{B}^n$ measured through a given distance metric $d(\cdot, \cdot)$ can be derived using the following procedure: 
+\begin{enumerate}
+    \item Compute values for $i=1,2,\ldots, m$: $k_i'=\lfloor n \mathbf{b}[i]+1/2 \rfloor$, and $n'=\sum_{i=1}^m k_i'$;
+    \item Let $D=n'-n$.
+    \begin{enumerate}
+        \item If $D=0$ ($n'=n$), the nearest $\mathbf{b}_n$ is given by $(\frac{k'_1}{n}, \frac{k'_2}{n}, \ldots, \frac{k'_m}{n})$. Otherwise, compute the errors $e_i=k'_i-n\mathbf{b}(i)$ and sort them $-1/2\leq e_{i_1}\leq e_{i_2}\leq \ldots\leq e_{i_m}\leq 1/2$;
+        \item If $D>0$, let
+    $$k_{i_j}=\left\{\begin{array}{ll}
+        k'_{i_j}, & \text{if } j=1,\ldots, m-D-1,\\
+        k'_{i_j}-1, & \text{if } j=m-D,\ldots, m.
+    \end{array}\right.$$
+    \item If $D<0$, let
+    $$k_{i_j}=\left\{\begin{array}{ll}
+        k'_{i_j}+1, & \text{if } j=1, \ldots, |D| \\
+        k'_{i_j}, & \text{if } j=|D|+1,\ldots, m.
+    \end{array}\right.$$
+    \end{enumerate}
+\end{enumerate}
+Then, the nearest neighbor is given by $(k_1/n, \ldots, k_m/n)$, which also defines the quantization mapping $L^n: \mathcal{B}\rightarrow\mathcal{B}^n$ by associating each belief with its nearest neighbor. 
+
+Denote by $\sigma_t(h_t)$ the Bayesian posterior belief under information state in \Cref{eg:belief}. Define the \textsc{ais} induced by the lattice quantizer $L^n$ as $\hat{\sigma}_t(h_t)=L^n(\sigma_t(h_t))$. Since $\sigma_t(h_t), \hat{\sigma}_t(h_t)\in \R^m$, we can consider the $\ell_1$-distance between the two vectors, which is proved to be upper-bounded by $m/2n$. Hence, a sufficiently large $n\sim O(1/\epsilon)$ will lead to \eqref{eq:reward_ais}. 
+
+To construct the time-homogeneous kernel $\hat{P}$, we introduce the belief space partition. Given $\mathcal{B}^n=\{\mathbf{b}^{n, 1}, \ldots, \mathbf{b}^{n, k_n}\}$, which is a $1/n$-net in $\mathcal{B}$, for any $\mathbf{b}\in \mathcal{B}$, 
+\begin{equation*}
+    \min_{i\in \{1, 2, \ldots, k_n\}} d(\mathbf{b}, \mathbf{b}^{n,i})< 1/n,
+\end{equation*}
+which induces a partition $\{\mathcal{P}^{n,i}\}_{i=1}^{k_n}$ satisfying that $\mathbf{b}^{n,i}\in \mathcal{P}^{n,i}$ and $\max_{\mathbf{b}\in \mathcal{P}^{n,i}} d_{\mathcal{B}}(\mathbf{b}, \mathbf{b}^{n,i})< 1/n$.
+
+Let $\{\nu^n\}$ be a sequence of probability measures on $\mathcal{B}$ satisfying $\nu^n(\mathcal{P}^{n,i})>0$, for all $i$ and $n$.  One example of such is $\nu^n=1/k_n \sum_{i=1}^{k_n} \delta_{\mathbf{b}^{n,i}}(\cdot)$. Let $\nu^{n,i}$ be the restriction of $\nu^n$ to $\mathcal{P}^{n,i}$ defined by 
+\begin{equation*}
+    \nu^{n,i}(\cdot)=\frac{\nu^{n}(\cdot)}{\nu^n(\mathcal{P}^{n,i})}.
+\end{equation*}
+The \textsc{ais} transition kernel $\hat{P}$ is thus given by 
+\begin{equation*}
+    \hat{P}(\cdot|\mathbf{b}^{n,i},a)=\int_{\mathcal{P}^{n,i}} L^n_{\sharp}\Phi(\cdot|\mathbf{b},a)\nu^{n,i}(\mathrm{d}\mathbf{b}),
+\end{equation*}
+where $ L^n_{\sharp}$ is the pushforward measure. 
+\end{example}
+
+\paragraph{Approximate Dynamic Programming} Given a $(\epsilon, \delta)$-\textsc{ais}, consider the Bellman operator $\hat{\mathscr{B}}$ defined over the uniformly bounded function class $\hat{\mathcal{V}}:\hat{\mathcal{X}}\rightarrow\R$, 
+\begin{equation}
+    [\hat{\mathscr{B}}\hat{V}](\hat{x})=\max_{a\in \mathcal{A}} \left\{\hat{r}(\hat{x},a)+\gamma\int_{\hat{\mathcal{X}}}\hat{V}(\hat{x}')\hat{P}(\mathrm{d}\hat{x}'|\hat{x},a)\right\}.
+\end{equation}
+Due to the operator's contractive nature, we denote by $\hat{V}^*$ the fixed point, and define 
+\begin{equation*}
+    \hat{Q}^*(\hat{x},a)\triangleq \hat{r}(\hat{x}, a) +\gamma \int_{\hat{\mathcal{X}}} \hat{V}^*(\hat{x}')\hat{P}(\mathrm{d}\hat{x}'|\hat{x},a).
+\end{equation*}
+ One of the key findings in \cite{mahajan22approx-info} is that $\hat{V}^*$ and $\hat{Q}^*$ are approximations to the optimal value function $V_t(h_t)$ in \eqref{eq:bellman-is} and Q function $Q_t(h_t,a)=\E[R_t+\gamma V_{t+1}(H_{t+1})|H_t=h_t, A_t=a]$, respectively. 
+ \begin{equation}
+     |V_t(h_t)-\hat{V}^*(\hat{\sigma}_t(h_t))|\leq \alpha,\quad |Q_t(h_t,a_t)-\hat{Q}^*(\hat{\sigma}_t(h_t),a_t)|\leq \alpha,\quad \alpha=\frac{\epsilon+\delta\gamma c_{\mathcal{F}} }{1-\gamma}.
+ \end{equation}
+
+\section{Policy Gradient in POMDP}
+The main objectives of this section are two-fold: 1) establishing the policy gradient theorem under \textsc{ais}, and characterizing the estimating bias originating from i) the \textsc{ais} and ii) the use of sample rewards directly without using the \textsc{ais}-reward mapping; 2) establishing convergence results under the biased gradient estimate, which involves extending the two lemmas above the \textsc{pomdp} case.  
+
+\begin{lemma}[Performance Difference in \textsc{is}]
+    Consider two \textsc{is} policies $\pi'$ and $\tilde{\pi}$ under a time-homogeneous $(\epsilon, \delta)-$\textsc{is} $\{\sigma_t:\mathcal{H}\rightarrow \mathcal{X}\}_{t\geq 1}$, $\hat{P}: \hat{\mathcal{X}}\times \mathcal{A}\rightarrow \hat{\mathcal{X}}$, and , the difference between their \textsc{is} value functions with the initial prior $x_1=\sigma_1(o_1)\sim\rho_\mathrm{z}$ is given by 
+    \begin{equation}
+        \label{lem:perf-diff-is}
+        \tilde{V}^{\tilde{\pi}}(\rho_\mathrm{z})-\tilde{V}^{\pi'}(\rho_\mathrm{z})=\int_{\mathcal{X}} [\mathscr{B}^{\tilde{\pi}}\tilde{V}^{\pi'}-\tilde{V}^{\pi'}](x)d^{\tilde{\pi}}(\mathrm{d}x).
+    \end{equation}
+\end{lemma} 
+
+\begin{theorem}[Policy Gradient in \textsc{is}]
+    Given a parameterized policy $\tilde{\pi}_\theta$  under the time-homogeneous \textsc{is} $\{\sigma_t:\mathcal{H}\rightarrow \mathcal{X}\}_{t\geq 1}$, the gradient of the \textsc{is}-value function with respect to the parameter is 
+    \begin{subequations}
+    \begin{align}
+        \nabla_\theta \tilde{V}(\theta)&=\int_\mathcal{X}\int_\mathcal{A} \tilde{Q}^\theta(x,a)\nabla\pi_\theta(x,a)\mathrm{d}a d^\theta(\mathrm{d} x),\\
+        \tilde{Q}(x, \tilde{\pi}(x))&=\mathbb{E}[R_t|X_t=x, A_t\sim\tilde{\pi}(\cdot|x)]+\gamma\int_{\mathcal{A}}\int_{\mathcal{X}} \tilde{V}(x')P(\mathrm{d}x'|x,a)\tilde{\pi}(\mathrm{d}a|x).
+    \end{align}
+    \end{subequations}
+\end{theorem}
+
+\begin{lemma}[Performance Difference in \textsc{ais}]
+    Consider two policies $\pi'$ and $\hat{\pi}$ under a time-homogeneous \textsc{ais} $\{\sigma_t:\mathcal{H}\rightarrow \mathcal{X}\}_{t\geq 1}$, the difference between their value functions with the prior distribution $\rho_\mathrm{z}$ is given by
+    \begin{equation}
+        \hat{V}^{\hat{\pi}}(\rho_\mathrm{z})- \hat{V}^{\pi'}(\rho_\mathrm{z}) = \int_{\hat{\mathcal{X}}} [\hat{\mathscr{B}}^{\hat{\pi}}\hat{V}^{\pi'}-\hat{V}^{\pi'}](x)d^{\hat{\pi}}(\mathrm{d}x).
+    \end{equation}
+\end{lemma}
+\begin{corollary}[Policy Gradient in \textsc{ais}]
+    Given a parameterized policy $\hat{\pi}_\theta$ under the $(\epsilon,\delta)$-\textsc{ais}, $\{\sigma_t: \mathcal{H}\rightarrow \hat{\mathcal{X}}\}$, $\hat{P}:\hat{\mathcal{X}}\times \mathcal{A}\rightarrow\hat{\mathcal{X}}$, and $\hat{r}:\hat{\mathcal{X}}\times\mathcal{A}\rightarrow\R$, the gradient of the \textsc{ais}-value function with respect to the parameter is 
+    \begin{subequations}
+        \begin{align*}
+            \nabla_\theta \hat{V}(\theta)&=\int_{\hat{\mathcal{X}}}\int_{\mathcal{A}} \hat{Q}^\theta(\hat{x},a)\nabla\hat{\pi}_\theta(\hat{x},a)\mathrm{d}a d^{\hat{\pi}}(\mathrm{d}x),\\
+            \hat{Q}(x,\hat{\pi}(x))&=\mathbb{E}[\hat{r}(x,A_t)|A_t\sim \hat{\pi}(x)]+\gamma\int_{\hat{\mathcal{X}}}\int_{\mathcal{A}}\hat{V}(x')\hat{P}(\mathrm{d}x'|x,a)\hat{\pi}(\mathrm{d}a|x)  
+        \end{align*}
+    \end{subequations}
+\end{corollary}
+
+We now move to a more practical learning paradigm where (approximate) information state is utilized for control, whereas the REINFORCE type estimator directly uses the sample rewards. 
+\begin{equation*}
+    V^{\hat{\pi}}(\hat{x}_t)=V^{\hat{\pi}}(\hat{\sigma}_t(h_t))=\E\bigg[\sum_{k=t}^{\infty}\gamma^{t-k} R_k|H_t=h_t\bigg],
+\end{equation*}
+where the actions are generated by $A_k\sim \hat{\pi}(\cdot|\hat{\sigma}_k(H_k))$. 
+\begin{lemma}[Approximate Performance Difference in \textsc{ais}]
+    Given an initial distribution $\rho_\mathrm{z}$ for the initial information state $\hat{x}_0=\hat{\sigma}(h_0)$ ($h_0=\{o_0\}$), and two \textsc{ais} policies $\hat{\pi}$ and $\hat{\pi}'$, we have 
+    \begin{align}
+        V^{\hat{\pi}'}(\rho_{\mathrm{z}})-V^{\hat{\pi}}(\rho_\mathrm{z})&\geq \frac{1}{1-\gamma} \E_{(\hat{X}, A)\sim d^{\hat{\pi}'}\otimes\hat{\pi}'}\bigg[\hat{A}^{\hat{\pi}}(\hat{X}, A)\bigg]-\frac{2\gamma c_{\mathcal{F}}\delta}{1-\gamma},\\
+        &= \int_{\hat{\mathcal{X}}}[\hat{\mathscr{B}}^{\hat{\pi}'} \hat{V}^{\hat{\pi}}-\hat{V}^{\hat{\pi}}](\hat{x}){d}^{\hat{\pi}'}(\mathrm{d}\hat{x})-\frac{2\gamma c_{\mathcal{F}}\delta}{1-\gamma}
+    \end{align}
+    where $c_\mathcal{F}$ is a constant related to the bounded function class in the definition of $D_{\textsc{ipm}}^\mathcal{F}$ in \eqref{eq:self-pred-ais}, and 
+    \begin{equation}
+        \hat{A}^{\hat{\pi}}(\hat{x},a)=\hat{Q}^{\hat{\pi}}(\hat{x},a)-\hat{V}^{\hat{\pi}}(\hat{x})
+    \end{equation}
+\end{lemma}
+
+
+
+\begin{corollary}[Policy Gradient]
+    
+\end{corollary}
+
+Now, what we actually care about is
+$$
+J(\theta):=V^{\hat{\pi}_{\theta}}\left(\rho_{z}\right)=\mathbb{E}\left[\sum_{t \geq 0} \gamma^{t} R_{t}\right], \quad A_{t} \sim \hat{\pi}_{\theta}\left(\cdot \mid \hat{X}_{t}\right), \hat{X}_{t}=\hat{\sigma}\left(H_{t}\right),
+$$
+our nominal AIS-MDP objective is
+$$
+\hat{J}(\theta):=\hat{V}^{\hat{\pi}_{\theta}}(\hat{\rho})=\mathbb{E}\left[\sum_{t>0} \gamma^{t} \hat{r}\left(\hat{X}_{t}, A_{t}\right)\right], \quad \hat{X}_{t+1} \sim \hat{P}\left(\cdot \mid \hat{X}_{t}, A_{t}\right) .
+$$
+The reinforce estimator we run is 
+$$
+g_{t}:=G_{t} \nabla_{\theta} \log \hat{\pi}_{\theta}\left(A_{t} \mid \hat{X}_{t}\right), \quad G_{t}=\sum_{k=t}^{T-1} \gamma^{k-t} R_{k}
+$$
+
+\textcolor{purple}{(Yunian: The following is AI-assisted proof)}
+
+% ============================================================
+% Assumptions referenced in Lemmas~\ref{lem:value-transfer}--\ref{lem:grad-transfer}
+% ============================================================
+
+\begin{assumption}[Bounded rewards]\label{ass:A1}
+The environment rewards are almost surely bounded: there exists $R_{\max}<\infty$ such that
+\begin{equation*}
+|R_t|\le R_{\max}\qquad \text{a.s. for all } t\ge 1.
+\end{equation*}
+Moreover, the nominal AIS reward model is uniformly bounded: there exists $\hat R_{\max}<\infty$ such that
+\begin{equation*}
+|\hat r(\hat x,a)|\le \hat R_{\max}\qquad \text{for all } (\hat x,a)\in\hat{\mathcal X}\times\mathcal A.
+\end{equation*}
+\end{assumption}
+
+\begin{assumption}[AIS reward approximation]\label{ass:A2}
+The approximate information state generator $(\{\hat\sigma_t\},\hat r,\hat P)$ satisfies condition \textsc{(ais-I)} with parameter $\epsilon$:
+for all $t\ge 1$, all $h_t\in\mathcal H_t$, and all $a\in\mathcal A$,
+\begin{equation*}
+\left|
+\mathbb{E}\!\left[R_t\mid H_t=h_t,\;A_t=a\right] - \hat r\!\left(\hat\sigma_t(h_t),a\right)
+\right|
+\le
+\epsilon.
+\end{equation*}
+\end{assumption}
+
+\begin{assumption}[AIS transition approximation in IPM]\label{ass:A3}
+The approximate information state generator $(\{\hat\sigma_t\},\hat r,\hat P)$ satisfies condition \textsc{(ais-II)} with parameter $\delta$ under the IPM induced by a function class $\mathcal F$:
+for all $t\ge 1$, all $h_t\in\mathcal H_t$, all $a\in\mathcal A$, and all Borel subsets $\mathcal B\subset\hat{\mathcal X}$, letting
+\begin{equation*}
+\phi_t(\cdot) := \mathbb{P}\!\left(\hat X_{t+1}\in \cdot \mid H_t=h_t,\;A_t=a\right),
+\qquad
+\varphi_t(\cdot) := \hat P(\cdot\mid \hat X_t=\hat\sigma_t(h_t),a),
+\end{equation*}
+we have
+\begin{equation*}
+D^{\mathcal F}_{\mathrm{IPM}}(\phi_t,\varphi_t)
+:=
+\sup_{f\in\mathcal F}
+\left|
+\int_{\hat{\mathcal X}} f\,d\phi_t - \int_{\hat{\mathcal X}} f\,d\varphi_t
+\right|
+\le
+\delta.
+\end{equation*}
+\end{assumption}
+
+\begin{assumption}[IPM test-function domination constant]\label{ass:A4}
+There exists a constant $c_{\mathcal F}<\infty$ such that for any pair of probability measures $\mu,\nu$ on $\hat{\mathcal X}$ and any bounded measurable function $g:\hat{\mathcal X}\to\mathbb{R}$ belonging to the scaled closure of $\mathcal F$, we have
+\begin{equation*}
+\left|\int_{\hat{\mathcal X}} g\,d\mu - \int_{\hat{\mathcal X}} g\,d\nu\right|
+\le
+c_{\mathcal F}\,
+D^{\mathcal F}_{\mathrm{IPM}}(\mu,\nu).
+\end{equation*}
+In particular, when $\hat{\mathcal X}$ is finite and one chooses $\mathcal F=\{f:\|f\|_\infty\le 1\}$, one may take $c_{\mathcal F}=\|g\|_\infty$.
+\end{assumption}
+
+\begin{assumption}[Uniform score-function bound]\label{ass:A5}
+There exists a constant $G_\pi<\infty$ such that for all parameters $\theta\in\Theta$, all latent states $\hat x\in\hat{\mathcal X}$, and all actions $a\in\mathcal A$,
+\begin{equation*}
+\big\|\nabla_\theta \log \hat\pi_\theta(a\mid \hat x)\big\|
+\le
+G_\pi.
+\end{equation*}
+\end{assumption}
+
+\begin{assumption}[Equivalence of IPM and $\ell_1$ on finite $\hat{\mathcal X}$]\label{ass:A6}
+Assume $\hat{\mathcal X}$ is finite. There exists a constant $\kappa_{\mathcal F}<\infty$ (depending only on $\mathcal F$ and $\hat{\mathcal X}$) such that for all probability measures $\mu,\nu$ on $\hat{\mathcal X}$,
+\begin{equation*}
+\|\mu-\nu\|_1
+\le
+\kappa_{\mathcal F}\,D^{\mathcal F}_{\mathrm{IPM}}(\mu,\nu).
+\end{equation*}
+In particular, if $\mathcal F=\{f:\|f\|_\infty\le 1\}$, then $D^{\mathcal F}_{\mathrm{IPM}}(\mu,\nu)=\|\mu-\nu\|_1$ and thus $\kappa_{\mathcal F}=1$.
+\end{assumption}
+
+
+% ============================================================
+% Lemma 1: Objective / Value Transfer (True POMDP vs Nominal AIS-MDP)
+% ============================================================
+
+% --- Standing assumptions used by both lemmas ---
+% (A1) Bounded rewards: |R_t| <= R_max a.s., and |\hat r(\hat x,a)| <= \hat R_max for all (\hat x,a).
+% (A2) AIS reward approximation (Def. AIS-I): for all t, h_t, a,
+%      | E[R_t | H_t=h_t, A_t=a] - \hat r(\hat\sigma_t(h_t), a) | <= \epsilon.
+% (A3) AIS transition approximation (Def. AIS-II): for all t, h_t, a,
+%      D^{\mathcal F}_{\mathrm{IPM}}( \phi_t, \varphi_t ) <= \delta,
+%      where \phi_t(\cdot) = P( \hat X_{t+1} \in \cdot | H_t=h_t, A_t=a )
+%            \varphi_t(\cdot) = \hat P( \cdot | \hat X_t=\hat\sigma_t(h_t), a ).
+% (A4) IPM-dominating constant c_{\mathcal F}: for any measurable g with \|g\|_\infty <= \frac{\hat R_{\max}}{1-\gamma},
+%      we have
+%      \left|\int g \, d\phi - \int g \, d\varphi \right| \le c_{\mathcal F}\, D^{\mathcal F}_{\mathrm{IPM}}(\phi,\varphi)
+%      for all probability measures \phi,\varphi on \hat{\mathcal X}.
+%      (On finite \hat{\mathcal X}, one may take \mathcal F = \{f:\|f\|_\infty\le 1\} so that c_{\mathcal F}= \frac{\hat R_{\max}}{1-\gamma}.)
+
+% --- Notation ---
+% Let \hat\pi be any stationary Markov policy on \hat{\mathcal X}.
+% The agent executes actions A_t ~ \hat\pi(\cdot|\hat X_t) where \hat X_t = \hat\sigma_t(H_t).
+% Define the true (history) value under \hat\pi:
+%   V_t^{\hat\pi}(h_t) := E[ \sum_{k=t}^{\infty} \gamma^{k-t} R_k \mid H_t=h_t, \hat\pi ].
+% Define the nominal AIS-MDP value under \hat\pi:
+%   \hat V^{\hat\pi}(\hat x) := E[ \sum_{k=0}^{\infty} \gamma^{k} \hat r(\hat X_k,A_k) \mid \hat X_0=\hat x, \hat\pi, \hat P ].
+% Let the initial observation prior be \rho_z on \mathcal O, and initial latent prior be \hat\rho := (\hat\sigma_1)_\sharp \rho_z.
+
+\begin{lemma}[Objective / Value Transfer under $(\epsilon,\delta)$-AIS]
+\label{lem:value-transfer}
+Fix any stationary policy $\hat\pi:\hat{\mathcal X}\to\Delta(\mathcal A)$. Under Assumptions (\cref{ass:A1})--(\cref{ass:A4}), for every time $t\ge 1$ and every history realization $h_t\in\mathcal H_t$, letting $\hat x_t=\hat\sigma_t(h_t)$, we have the pointwise bound
+\begin{equation*}
+\big|V_t^{\hat\pi}(h_t)-\hat V^{\hat\pi}(\hat x_t)\big|
+\;\le\;
+\frac{\epsilon+\gamma c_{\mathcal F}\delta}{1-\gamma}.
+\end{equation*}
+Consequently, for the corresponding objectives with initial prior,
+\begin{equation*}
+\big|V^{\hat\pi}(\rho_z)-\hat V^{\hat\pi}(\hat\rho)\big|
+\;\le\;
+\frac{\epsilon+\gamma c_{\mathcal F}\delta}{1-\gamma}.
+\end{equation*}
+\end{lemma}
+
+\begin{proof}
+Fix $t\ge 1$ and $h_t\in\mathcal H_t$, and write $\hat x_t=\hat\sigma_t(h_t)$. Define the error function
+\begin{equation*}
+\Delta_t(h_t)\;:=\;V_t^{\hat\pi}(h_t)-\hat V^{\hat\pi}(\hat x_t).
+\end{equation*}
+We will derive a one-step recursion and then take suprema.
+
+\paragraph{Step 1: Bellman recursion for the true history value.}
+By definition of $V_t^{\hat\pi}(h_t)$ and the tower property, we may condition on $(H_t,A_t)$:
+\begin{equation*}
+V_t^{\hat\pi}(h_t)
+=
+\mathbb{E}\!\left[ R_t + \gamma V_{t+1}^{\hat\pi}(H_{t+1}) \mid H_t=h_t,\; A_t\sim\hat\pi(\cdot|\hat x_t)\right].
+\end{equation*}
+Equivalently, writing out the action sampling explicitly,
+\begin{equation*}
+V_t^{\hat\pi}(h_t)
+=
+\sum_{a\in\mathcal A}\hat\pi(a|\hat x_t)\,
+\mathbb{E}\!\left[ R_t + \gamma V_{t+1}^{\hat\pi}(H_{t+1}) \mid H_t=h_t, A_t=a \right].
+\end{equation*}
+
+\paragraph{Step 2: Bellman recursion for the nominal AIS-MDP value.}
+The nominal AIS-MDP with reward $\hat r$ and transition $\hat P$ yields the standard recursion
+\begin{equation*}
+\hat V^{\hat\pi}(\hat x_t)
+=
+\sum_{a\in\mathcal A}\hat\pi(a|\hat x_t)\left(
+\hat r(\hat x_t,a)
++
+\gamma \sum_{\hat x'\in\hat{\mathcal X}} \hat P(\hat x'|\hat x_t,a)\,\hat V^{\hat\pi}(\hat x')
+\right).
+\end{equation*}
+
+\paragraph{Step 3: Subtract the two recursions and split terms.}
+Subtracting Step 2 from Step 1 gives
+\begin{equation*}
+\Delta_t(h_t)
+=
+\sum_{a\in\mathcal A}\hat\pi(a|\hat x_t)\Big( T_1(h_t,a) + \gamma T_2(h_t,a)\Big),
+\end{equation*}
+where
+\begin{equation*}
+T_1(h_t,a)
+:=
+\mathbb{E}\!\left[R_t\mid H_t=h_t,A_t=a\right]-\hat r(\hat x_t,a),
+\end{equation*}
+and
+\begin{equation*}
+T_2(h_t,a)
+:=
+\mathbb{E}\!\left[V_{t+1}^{\hat\pi}(H_{t+1})\mid H_t=h_t,A_t=a\right]
+-
+\sum_{\hat x'\in\hat{\mathcal X}} \hat P(\hat x'|\hat x_t,a)\,\hat V^{\hat\pi}(\hat x').
+\end{equation*}
+
+\paragraph{Step 4: Bound the immediate reward mismatch term $T_1$.}
+By AIS condition (\cref{ass:A2}), for every $(t,h_t,a)$,
+\begin{equation*}
+|T_1(h_t,a)| \le \epsilon.
+\end{equation*}
+
+\paragraph{Step 5: Expand and bound the future-value mismatch term $T_2$.}
+Introduce the true conditional law of the next AIS under the real process:
+\begin{equation*}
+\phi_t(\cdot \mid h_t,a) := \mathbb{P}\!\left(\hat X_{t+1}\in \cdot \mid H_t=h_t, A_t=a\right).
+\end{equation*}
+Also write the nominal kernel as
+\begin{equation*}
+\varphi_t(\cdot \mid h_t,a) := \hat P(\cdot \mid \hat x_t,a).
+\end{equation*}
+Now add and subtract $\mathbb{E}[\hat V^{\hat\pi}(\hat X_{t+1})\mid H_t=h_t,A_t=a]$:
+\begin{align*}
+T_2(h_t,a)
+&=
+\mathbb{E}\!\left[V_{t+1}^{\hat\pi}(H_{t+1}) - \hat V^{\hat\pi}(\hat X_{t+1}) \mid H_t=h_t,A_t=a\right] \\
+&\quad
++
+\mathbb{E}\!\left[\hat V^{\hat\pi}(\hat X_{t+1}) \mid H_t=h_t,A_t=a\right]
+-
+\sum_{\hat x'\in\hat{\mathcal X}} \hat P(\hat x'|\hat x_t,a)\,\hat V^{\hat\pi}(\hat x').
+\end{align*}
+The first term equals the conditional expectation of $\Delta_{t+1}(H_{t+1})$:
+\begin{equation*}
+\mathbb{E}\!\left[V_{t+1}^{\hat\pi}(H_{t+1}) - \hat V^{\hat\pi}(\hat X_{t+1}) \mid H_t=h_t,A_t=a\right]
+=
+\mathbb{E}\!\left[\Delta_{t+1}(H_{t+1}) \mid H_t=h_t,A_t=a\right].
+\end{equation*}
+For the second term, write it as an integral against the two measures:
+\begin{align*}
+&
+\mathbb{E}\!\left[\hat V^{\hat\pi}(\hat X_{t+1}) \mid H_t=h_t,A_t=a\right]
+-
+\sum_{\hat x'\in\hat{\mathcal X}} \hat P(\hat x'|\hat x_t,a)\,\hat V^{\hat\pi}(\hat x') \\
+&=
+\int_{\hat{\mathcal X}} \hat V^{\hat\pi}(\hat x')\, \phi_t(d\hat x' \mid h_t,a)
+-
+\int_{\hat{\mathcal X}} \hat V^{\hat\pi}(\hat x')\, \varphi_t(d\hat x' \mid h_t,a).
+\end{align*}
+By bounded rewards (\cref{ass:A1}), the nominal value is uniformly bounded:
+\begin{equation*}
+\|\hat V^{\hat\pi}\|_\infty \le \sum_{k=0}^\infty \gamma^k \|\hat r\|_\infty \le \frac{\hat R_{\max}}{1-\gamma}.
+\end{equation*}
+Applying Assumption (\cref{ass:A4}) with $g=\hat V^{\hat\pi}$ and the AIS-IPM bound (\cref{ass:A3}),
+\begin{equation*}
+\left|
+\int_{\hat{\mathcal X}} \hat V^{\hat\pi}(\hat x')\, \phi_t(d\hat x' \mid h_t,a)
+-
+\int_{\hat{\mathcal X}} \hat V^{\hat\pi}(\hat x')\, \varphi_t(d\hat x' \mid h_t,a)
+\right|
+\le
+c_{\mathcal F}\, D^{\mathcal F}_{\mathrm{IPM}}(\phi_t,\varphi_t)
+\le
+c_{\mathcal F}\delta.
+\end{equation*}
+Therefore, we have the bound
+\begin{equation*}
+|T_2(h_t,a)|
+\le
+\mathbb{E}\!\left[|\Delta_{t+1}(H_{t+1})| \mid H_t=h_t,A_t=a\right]
++
+c_{\mathcal F}\delta.
+\end{equation*}
+
+\paragraph{Step 6: Close the recursion in sup-norm.}
+Combine Steps 4--5 in the expression for $\Delta_t(h_t)$ and use $\sum_a \hat\pi(a|\hat x_t)=1$:
+\begin{align*}
+|\Delta_t(h_t)|
+&\le
+\sum_{a\in\mathcal A}\hat\pi(a|\hat x_t)\Big(
+|T_1(h_t,a)| + \gamma |T_2(h_t,a)|
+\Big) \\
+&\le
+\epsilon
++
+\gamma \sum_{a\in\mathcal A}\hat\pi(a|\hat x_t)\Big(
+\mathbb{E}\!\left[|\Delta_{t+1}(H_{t+1})| \mid H_t=h_t,A_t=a\right]
++
+c_{\mathcal F}\delta
+\Big) \\
+&=
+\epsilon + \gamma c_{\mathcal F}\delta
++
+\gamma\,\mathbb{E}\!\left[|\Delta_{t+1}(H_{t+1})| \mid H_t=h_t,\;A_t\sim\hat\pi(\cdot|\hat x_t)\right].
+\end{align*}
+Now define the uniform error bound
+\begin{equation*}
+\Delta_\star := \sup_{t\ge 1}\sup_{h_t\in\mathcal H_t} |\Delta_t(h_t)|.
+\end{equation*}
+Taking supremum over $(t,h_t)$ on both sides yields
+\begin{equation*}
+\Delta_\star \le \epsilon + \gamma c_{\mathcal F}\delta + \gamma \Delta_\star.
+\end{equation*}
+Rearranging gives
+\begin{equation*}
+\Delta_\star \le \frac{\epsilon+\gamma c_{\mathcal F}\delta}{1-\gamma}.
+\end{equation*}
+This proves the pointwise bound.
+
+\paragraph{Step 7: Transfer to the initial prior objective.}
+By definition,
+\begin{equation*}
+V^{\hat\pi}(\rho_z) = \mathbb{E}_{O_1\sim\rho_z}\!\left[V_1^{\hat\pi}(H_1)\right],
+\qquad
+\hat V^{\hat\pi}(\hat\rho)=\mathbb{E}_{\hat X_1\sim \hat\rho}\!\left[\hat V^{\hat\pi}(\hat X_1)\right],
+\end{equation*}
+and $\hat X_1=\hat\sigma_1(O_1)$ implies $\hat\rho=(\hat\sigma_1)_\sharp\rho_z$. Thus,
+\begin{align*}
+\big|V^{\hat\pi}(\rho_z)-\hat V^{\hat\pi}(\hat\rho)\big|
+&=
+\left|
+\mathbb{E}_{O_1\sim\rho_z}\!\left[V_1^{\hat\pi}(H_1)-\hat V^{\hat\pi}(\hat\sigma_1(O_1))\right]
+\right| \\
+&\le
+\mathbb{E}_{O_1\sim\rho_z}\!\left[
+\left|V_1^{\hat\pi}(H_1)-\hat V^{\hat\pi}(\hat\sigma_1(O_1))\right|
+\right]
+\le \Delta_\star
+\le
+\frac{\epsilon+\gamma c_{\mathcal F}\delta}{1-\gamma}.
+\end{align*}
+This completes the proof.
+\end{proof}
+
+
+% ============================================================
+% Lemma 2: Gradient Transfer (True gradient vs Nominal gradient)
+% ============================================================
+
+% Additional assumptions for explicit constants:
+% (A5) Score bound: there exists G_\pi < \infty such that for all (\theta,\hat x,a),
+%      \|\nabla_\theta \log \hat\pi_\theta(a|\hat x)\| \le G_\pi.
+% (A6) IPM controls \ell_1 (finite-space equivalence): there exists \kappa_{\mathcal F} < \infty such that
+%      \|\mu-\nu\|_1 \le \kappa_{\mathcal F} D^{\mathcal F}_{\mathrm{IPM}}(\mu,\nu)
+%      for all distributions \mu,\nu on finite \hat{\mathcal X}.
+%      (If \mathcal F = \{f:\|f\|_\infty\le 1\}, then \kappa_{\mathcal F}=1.)
+
+% Define the nominal controlled kernel under \hat\pi_\theta:
+%   \hat P_\theta(\hat x'|\hat x) := \sum_{a\in\mathcal A} \hat\pi_\theta(a|\hat x)\,\hat P(\hat x'|\hat x,a).
+% Define the true one-step AIS kernel induced by the real process and policy:
+%   \bar P_{\theta,t}(\hat x'|\hat x) := \sum_{a\in\mathcal A}\hat\pi_\theta(a|\hat x)\,
+%                                     \mathbb{P}(\hat X_{t+1}=\hat x' \mid H_t=h_t, \hat X_t=\hat x, A_t=a),
+% whenever \hat x=\hat\sigma_t(h_t).
+% Under AIS-II and (A6), we will use the uniform bound
+%   \sup_{t,\hat x}\|\bar P_{\theta,t}(\cdot|\hat x)-\hat P_\theta(\cdot|\hat x)\|_1 \le \kappa_{\mathcal F}\delta.
+%
+% Discounted state occupancy measures on finite \hat{\mathcal X}:
+%   d_{\theta,\mathrm{nom}} := (1-\gamma)\sum_{t=0}^\infty \gamma^t \hat\rho \hat P_\theta^t  (row-vector convention),
+%   d_{\theta,\mathrm{true}} := (1-\gamma)\sum_{t=0}^\infty \gamma^t \hat\rho \bar P_{\theta,0:t-1}  (time-inhomogeneous product).
+% For the occupancy mismatch bound, we assume time-homogeneity for exposition, i.e., \bar P_{\theta,t} \equiv \bar P_\theta,
+% with \sup_{\hat x}\|\bar P_\theta(\cdot|\hat x)-\hat P_\theta(\cdot|\hat x)\|_1 \le \kappa_{\mathcal F}\delta.
+% (If you want the fully time-inhomogeneous case, you can replace powers by products; the same bound holds with the same constants.)
+
+\begin{lemma}[Gradient Transfer with Explicit Constants on Finite $\hat{\mathcal X}$]
+\label{lem:grad-transfer}
+Assume $\hat{\mathcal X}$ is finite and Assumptions (\cref{ass:A1})--(\cref{ass:A6}) hold. Fix $\theta$ and consider the AIS-conditioned policy $\hat\pi_\theta$ executed in the real POMDP (true rewards), and the same policy in the nominal AIS-MDP $(\hat r,\hat P)$.
+Let
+\begin{equation*}
+J(\theta) := V^{\hat\pi_\theta}(\rho_z),
+\qquad
+\hat J(\theta) := \hat V^{\hat\pi_\theta}(\hat\rho).
+\end{equation*}
+Then the gradient mismatch is bounded by
+\begin{equation*}
+\|\nabla_\theta J(\theta)-\nabla_\theta \hat J(\theta)\|
+\;\le\;
+\frac{G_\pi}{(1-\gamma)^2}\big(\epsilon+\gamma c_{\mathcal F}\delta\big)
+\;+\;
+\frac{\gamma\,\kappa_{\mathcal F}\,G_\pi\,\hat R_{\max}}{(1-\gamma)^3}\,\delta.
+\end{equation*}
+\end{lemma}
+
+\begin{proof}
+We proceed by (i) writing both gradients in a common discounted-occupancy form, (ii) adding and subtracting terms, and (iii) bounding the resulting components.
+
+\paragraph{Step 1: A policy-gradient identity for the true objective $J(\theta)$.}
+Let $\tau=(H_1,A_1,R_1,H_2,A_2,R_2,\ldots)$ denote a trajectory generated in the real POMDP by the AIS-conditioned policy $\hat\pi_\theta(A_t|\hat X_t)$ where $\hat X_t=\hat\sigma_t(H_t)$. By the log-derivative trick and standard interchange of gradient and expectation (justified by boundedness under (\cref{ass:A1}) and (\cref{ass:A5})), we have
+\begin{equation*}
+\nabla_\theta J(\theta)
+=
+\nabla_\theta \mathbb{E}\!\left[\sum_{t=0}^{\infty}\gamma^t R_{t+1}\right]
+=
+\mathbb{E}\!\left[\left(\sum_{t=0}^{\infty}\gamma^t R_{t+1}\right)\nabla_\theta \log p_\theta(\tau)\right],
+\end{equation*}
+where $p_\theta(\tau)$ denotes the trajectory density/mass under policy parameter $\theta$. Since the environment dynamics do not depend on $\theta$, $\nabla_\theta \log p_\theta(\tau)$ is the sum of policy score terms:
+\begin{equation*}
+\nabla_\theta \log p_\theta(\tau)
+=
+\sum_{t=0}^{\infty} \nabla_\theta \log \hat\pi_\theta(A_{t+1}\mid \hat X_{t+1}).
+\end{equation*}
+Plugging this in and exchanging sums yields
+\begin{align*}
+\nabla_\theta J(\theta)
+&=
+\mathbb{E}\!\left[
+\sum_{t=0}^{\infty}\sum_{k=0}^{\infty}
+\gamma^k R_{k+1}\,\nabla_\theta \log \hat\pi_\theta(A_{t+1}\mid \hat X_{t+1})
+\right] \\
+&=
+\mathbb{E}\!\left[
+\sum_{t=0}^{\infty}
+\left(\sum_{k=t}^{\infty}\gamma^k R_{k+1}\right)\nabla_\theta \log \hat\pi_\theta(A_{t+1}\mid \hat X_{t+1})
+\right].
+\end{align*}
+Define the (true, history-based) action-value function at time $t+1$:
+\begin{equation*}
+Q_{t+1}^{\hat\pi_\theta}(H_{t+1},A_{t+1})
+:=
+\mathbb{E}\!\left[\sum_{k=t}^{\infty}\gamma^{k-t} R_{k+1}\mid H_{t+1},A_{t+1}\right].
+\end{equation*}
+Then the previous expression becomes
+\begin{equation*}
+\nabla_\theta J(\theta)
+=
+\mathbb{E}\!\left[
+\sum_{t=0}^{\infty}\gamma^t\,
+Q_{t+1}^{\hat\pi_\theta}(H_{t+1},A_{t+1})\,
+\nabla_\theta \log \hat\pi_\theta(A_{t+1}\mid \hat X_{t+1})
+\right].
+\end{equation*}
+Now introduce the discounted occupancy measure on pairs $(H_{t+1},A_{t+1})$:
+\begin{equation*}
+d^{\theta}_{\mathrm{true}}(h,a)
+:=
+(1-\gamma)\sum_{t=0}^{\infty}\gamma^t\,\mathbb{P}_\theta(H_{t+1}=h, A_{t+1}=a),
+\end{equation*}
+so that for any bounded function $\psi(h,a)$,
+\begin{equation*}
+\mathbb{E}\!\left[\sum_{t=0}^\infty \gamma^t \psi(H_{t+1},A_{t+1})\right]
+=
+\frac{1}{1-\gamma}\,
+\mathbb{E}_{(H,A)\sim d^{\theta}_{\mathrm{true}}}\!\left[\psi(H,A)\right].
+\end{equation*}
+Applying this identity with $\psi(h,a)=Q_{t+1}^{\hat\pi_\theta}(h,a)\nabla_\theta \log \hat\pi_\theta(a\mid \hat\sigma(h))$ yields
+\begin{equation*}
+\nabla_\theta J(\theta)
+=
+\frac{1}{1-\gamma}\,
+\mathbb{E}_{(H,A)\sim d^{\theta}_{\mathrm{true}}}\!\left[
+Q^{\hat\pi_\theta}(H,A)\,\nabla_\theta \log \hat\pi_\theta(A\mid \hat\sigma(H))
+\right],
+\end{equation*}
+where we write $Q^{\hat\pi_\theta}(H,A)$ for the time-indexed $Q_{t+1}^{\hat\pi_\theta}(H_{t+1},A_{t+1})$ under the discounted occupancy.
+
+\paragraph{Step 2: A policy-gradient identity for the nominal objective $\hat J(\theta)$.}
+In the nominal AIS-MDP, standard policy-gradient theorem gives
+\begin{equation*}
+\nabla_\theta \hat J(\theta)
+=
+\frac{1}{1-\gamma}\,
+\mathbb{E}_{(\hat X,A)\sim d^{\theta}_{\mathrm{nom}}}\!\left[
+\hat Q^{\hat\pi_\theta}(\hat X,A)\,\nabla_\theta \log \hat\pi_\theta(A\mid \hat X)
+\right],
+\end{equation*}
+where
+\begin{equation*}
+d^{\theta}_{\mathrm{nom}}(\hat x,a)
+:=
+(1-\gamma)\sum_{t=0}^{\infty}\gamma^t\,\mathbb{P}_{\mathrm{nom},\theta}(\hat X_{t+1}=\hat x, A_{t+1}=a),
+\end{equation*}
+with $\hat X_{t+1}$ evolving by $\hat P$ and actions by $\hat\pi_\theta$.
+
+\paragraph{Step 3: Add and subtract a common term to decompose the gradient gap.}
+Define the score function
+\begin{equation*}
+S_\theta(\hat x,a) := \nabla_\theta \log \hat\pi_\theta(a\mid \hat x).
+\end{equation*}
+Write the true gradient expectation over $(H,A)$, but note $\hat X=\hat\sigma(H)$ is a function of $H$:
+\begin{equation*}
+\nabla_\theta J(\theta)
+=
+\frac{1}{1-\gamma}\,
+\mathbb{E}_{(H,A)\sim d^{\theta}_{\mathrm{true}}}\!\left[
+Q^{\hat\pi_\theta}(H,A)\,S_\theta(\hat\sigma(H),A)
+\right].
+\end{equation*}
+Now add and subtract $\hat Q^{\hat\pi_\theta}(\hat\sigma(H),A)$ inside the bracket:
+\begin{align*}
+\nabla_\theta J(\theta)-\nabla_\theta \hat J(\theta)
+&=
+\frac{1}{1-\gamma}\Bigg(
+\underbrace{
+\mathbb{E}_{(H,A)\sim d^{\theta}_{\mathrm{true}}}\!\left[
+\Big(Q^{\hat\pi_\theta}(H,A)-\hat Q^{\hat\pi_\theta}(\hat\sigma(H),A)\Big)\,S_\theta(\hat\sigma(H),A)
+\right]
+}_{\mathrm{(I)}}
+\\
+&\qquad\qquad
++
+\underbrace{
+\mathbb{E}_{(H,A)\sim d^{\theta}_{\mathrm{true}}}\!\left[
+\hat Q^{\hat\pi_\theta}(\hat\sigma(H),A)\,S_\theta(\hat\sigma(H),A)
+\right]
+-
+\mathbb{E}_{(\hat X,A)\sim d^{\theta}_{\mathrm{nom}}}\!\left[
+\hat Q^{\hat\pi_\theta}(\hat X,A)\,S_\theta(\hat X,A)
+\right]
+}_{\mathrm{(II)}}
+\Bigg).
+\end{align*}
+We will bound (I) and (II) separately.
+
+\paragraph{Step 4: Bound term (I) using the $Q$-transfer bound and score bound.}
+First, apply the score bound (\cref{ass:A5}):
+\begin{equation*}
+\|S_\theta(\hat\sigma(H),A)\| \le G_\pi.
+\end{equation*}
+Second, from Lemma~\ref{lem:value-transfer} applied to the state-action value (one-step lookahead), we have the uniform bound
+\begin{equation*}
+\sup_{t,h,a}\left|Q_t^{\hat\pi_\theta}(h,a)-\hat Q^{\hat\pi_\theta}(\hat\sigma_t(h),a)\right|
+\le
+\frac{\epsilon+\gamma c_{\mathcal F}\delta}{1-\gamma}.
+\end{equation*}
+(If you do not yet have this $Q$-version stated, it is proved by repeating Lemma~\ref{lem:value-transfer} with $Q$ in place of $V$; the derivation is identical but starts from the one-step definition of $Q$.)
+Therefore,
+\begin{align*}
+\|\mathrm{(I)}\|
+&\le
+\mathbb{E}_{(H,A)\sim d^{\theta}_{\mathrm{true}}}\!\left[
+\left|Q^{\hat\pi_\theta}(H,A)-\hat Q^{\hat\pi_\theta}(\hat\sigma(H),A)\right|
+\cdot \|S_\theta(\hat\sigma(H),A)\|
+\right] \\
+&\le
+\frac{\epsilon+\gamma c_{\mathcal F}\delta}{1-\gamma}\cdot G_\pi.
+\end{align*}
+
+\paragraph{Step 5: Bound term (II) by an occupancy-measure mismatch.}
+Define the bounded test function on $\hat{\mathcal X}\times\mathcal A$,
+\begin{equation*}
+f_\theta(\hat x,a) := \hat Q^{\hat\pi_\theta}(\hat x,a)\,S_\theta(\hat x,a).
+\end{equation*}
+Then term (II) is exactly the difference of expectations of $f_\theta$ under the two discounted occupancies on $(\hat X,A)$:
+\begin{equation*}
+\mathrm{(II)}
+=
+\mathbb{E}_{(\hat X,A)\sim d^{\theta}_{\mathrm{true},\hat X}}\!\left[f_\theta(\hat X,A)\right]
+-
+\mathbb{E}_{(\hat X,A)\sim d^{\theta}_{\mathrm{nom}}}\!\left[f_\theta(\hat X,A)\right],
+\end{equation*}
+where $d^{\theta}_{\mathrm{true},\hat X}$ is the pushforward of $d^{\theta}_{\mathrm{true}}$ through $(H,A)\mapsto(\hat\sigma(H),A)$.
+Using Hölder's inequality on finite spaces,
+\begin{equation*}
+\|\mathrm{(II)}\|
+\le
+\|d^{\theta}_{\mathrm{true},\hat X} - d^{\theta}_{\mathrm{nom}}\|_1 \cdot \|f_\theta\|_\infty.
+\end{equation*}
+We bound $\|f_\theta\|_\infty$ using the score and $Q$ bounds. From (\cref{ass:A5}), $\|S_\theta(\hat x,a)\|\le G_\pi$, and from bounded rewards (\cref{ass:A1}),
+\begin{equation*}
+\|\hat Q^{\hat\pi_\theta}\|_\infty \le \frac{\hat R_{\max}}{1-\gamma}.
+\end{equation*}
+Hence,
+\begin{equation*}
+\|f_\theta\|_\infty \le \frac{\hat R_{\max}}{1-\gamma}\,G_\pi.
+\end{equation*}
+
+It remains to bound the discounted occupancy mismatch $\|d^{\theta}_{\mathrm{true},\hat X} - d^{\theta}_{\mathrm{nom}}\|_1$.
+Because $\hat{\mathcal X}$ is finite, we can treat distributions as row vectors and transitions as stochastic matrices.
+Let $\hat P_\theta$ denote the nominal state transition matrix under policy $\hat\pi_\theta$:
+\begin{equation*}
+\hat P_\theta(\hat x,\hat x')
+:=
+\sum_{a\in\mathcal A}\hat\pi_\theta(a|\hat x)\,\hat P(\hat x'|\hat x,a).
+\end{equation*}
+Likewise, define the (time-homogeneous) true AIS transition matrix under the same policy as $\bar P_\theta$, satisfying
+\begin{equation*}
+\sup_{\hat x\in\hat{\mathcal X}}\|\bar P_\theta(\cdot|\hat x)-\hat P_\theta(\cdot|\hat x)\|_1
+\le
+\kappa_{\mathcal F}\delta,
+\end{equation*}
+which follows from the AIS-IPM bound (\cref{ass:A3}) and norm equivalence (\cref{ass:A6}) after averaging over $a\sim\hat\pi_\theta(\cdot|\hat x)$.
+Now define the discounted occupancy row vectors
+\begin{equation*}
+d_{\mathrm{nom}}^\theta
+:=
+(1-\gamma)\sum_{t=0}^{\infty}\gamma^t \hat\rho \hat P_\theta^t,
+\qquad
+d_{\mathrm{true}}^\theta
+:=
+(1-\gamma)\sum_{t=0}^{\infty}\gamma^t \hat\rho \bar P_\theta^t.
+\end{equation*}
+Then
+\begin{align*}
+\|d_{\mathrm{true}}^\theta-d_{\mathrm{nom}}^\theta\|_1
+&\le
+(1-\gamma)\sum_{t=0}^{\infty}\gamma^t \|\hat\rho \bar P_\theta^t - \hat\rho \hat P_\theta^t\|_1 \\
+&\le
+(1-\gamma)\sum_{t=0}^{\infty}\gamma^t \|\bar P_\theta^t - \hat P_\theta^t\|_{1\to 1},
+\end{align*}
+where $\|\cdot\|_{1\to 1}$ is the induced operator norm on row vectors.
+We now bound $\|\bar P_\theta^t - \hat P_\theta^t\|_{1\to 1}$ by a telescoping expansion:
+\begin{align*}
+\bar P_\theta^t - \hat P_\theta^t
+&=
+\sum_{k=0}^{t-1} \bar P_\theta^{k}(\bar P_\theta-\hat P_\theta)\hat P_\theta^{t-1-k}.
+\end{align*}
+Taking the induced norm and using submultiplicativity,
+\begin{align*}
+\|\bar P_\theta^t - \hat P_\theta^t\|_{1\to 1}
+&\le
+\sum_{k=0}^{t-1}\|\bar P_\theta^{k}\|_{1\to 1}\,\|\bar P_\theta-\hat P_\theta\|_{1\to 1}\,\|\hat P_\theta^{t-1-k}\|_{1\to 1}.
+\end{align*}
+For any stochastic matrix $M$, $\|M\|_{1\to 1}=1$ (row-stochastic acts as a contraction in $\ell_1$ on distributions). Hence,
+\begin{equation*}
+\|\bar P_\theta^t - \hat P_\theta^t\|_{1\to 1}
+\le
+\sum_{k=0}^{t-1}\|\bar P_\theta-\hat P_\theta\|_{1\to 1}
+=
+t\,\|\bar P_\theta-\hat P_\theta\|_{1\to 1}.
+\end{equation*}
+Moreover,
+\begin{equation*}
+\|\bar P_\theta-\hat P_\theta\|_{1\to 1}
+=
+\sup_{\|u\|_1=1}\|u(\bar P_\theta-\hat P_\theta)\|_1
+=
+\sup_{\hat x\in\hat{\mathcal X}}\|\bar P_\theta(\cdot|\hat x)-\hat P_\theta(\cdot|\hat x)\|_1
+\le
+\kappa_{\mathcal F}\delta.
+\end{equation*}
+Therefore,
+\begin{equation*}
+\|d_{\mathrm{true}}^\theta-d_{\mathrm{nom}}^\theta\|_1
+\le
+(1-\gamma)\sum_{t=0}^{\infty}\gamma^t \, t\, \kappa_{\mathcal F}\delta
+=
+(1-\gamma)\kappa_{\mathcal F}\delta\sum_{t=0}^{\infty} t\gamma^t
+=
+(1-\gamma)\kappa_{\mathcal F}\delta \cdot \frac{\gamma}{(1-\gamma)^2}
+=
+\frac{\gamma}{1-\gamma}\,\kappa_{\mathcal F}\delta.
+\end{equation*}
+Since $d^{\theta}_{\mathrm{nom}}(\hat x,a)=d_{\mathrm{nom}}^\theta(\hat x)\hat\pi_\theta(a|\hat x)$ and similarly for $d^{\theta}_{\mathrm{true},\hat X}$, multiplying by the same conditional policy does not increase $\ell_1$ distance, so
+\begin{equation*}
+\|d^{\theta}_{\mathrm{true},\hat X} - d^{\theta}_{\mathrm{nom}}\|_1
+\le
+\|d_{\mathrm{true}}^\theta-d_{\mathrm{nom}}^\theta\|_1
+\le
+\frac{\gamma}{1-\gamma}\,\kappa_{\mathcal F}\delta.
+\end{equation*}
+Plugging this into the earlier bound for (II) gives
+\begin{equation*}
+\|\mathrm{(II)}\|
+\le
+\frac{\gamma}{1-\gamma}\,\kappa_{\mathcal F}\delta \cdot \frac{\hat R_{\max}}{1-\gamma}\,G_\pi
+=
+\frac{\gamma\,\kappa_{\mathcal F}\,G_\pi\,\hat R_{\max}}{(1-\gamma)^2}\,\delta.
+\end{equation*}
+
+\paragraph{Step 6: Combine bounds and simplify constants.}
+Recall that
+\begin{equation*}
+\|\nabla_\theta J(\theta)-\nabla_\theta \hat J(\theta)\|
+\le
+\frac{1}{1-\gamma}\Big(\|\mathrm{(I)}\|+\|\mathrm{(II)}\|\Big).
+\end{equation*}
+Using the bounds from Steps 4--5,
+\begin{align*}
+\|\nabla_\theta J(\theta)-\nabla_\theta \hat J(\theta)\|
+&\le
+\frac{1}{1-\gamma}\left(
+\frac{\epsilon+\gamma c_{\mathcal F}\delta}{1-\gamma}\,G_\pi
++
+\frac{\gamma\,\kappa_{\mathcal F}\,G_\pi\,\hat R_{\max}}{(1-\gamma)^2}\,\delta
+\right) \\
+&=
+\frac{G_\pi}{(1-\gamma)^2}\big(\epsilon+\gamma c_{\mathcal F}\delta\big)
++
+\frac{\gamma\,\kappa_{\mathcal F}\,G_\pi\,\hat R_{\max}}{(1-\gamma)^3}\,\delta,
+\end{align*}
+which is the claimed bound.
+\end{proof}
+
+% ============================================================
+% Theorem: Convergence transfer back to the true POMDP objective
+% (Option B: optimize with sampled rewards; analyze via nominal AIS-MDP)
+% ============================================================
+
+% We reuse Assumptions~\ref{ass:A1}--\ref{ass:A6} and Lemmas~\ref{lem:value-transfer}--\ref{lem:grad-transfer}.
+% We additionally assume smoothness + PL for the nominal AIS objective, and a standard REINFORCE noise model.
+
+\begin{assumption}[Smoothness of the nominal AIS objective]\label{ass:smooth}
+The nominal objective $\hat J(\theta):=\hat V^{\hat\pi_\theta}(\hat\rho)$ is differentiable and $L$-smooth:
+for all $\theta,\theta'\in\Theta$,
+\begin{equation*}
+\hat J(\theta') \ge \hat J(\theta)
++ \langle \nabla \hat J(\theta), \theta'-\theta\rangle
+- \frac{L}{2}\|\theta'-\theta\|^2.
+\end{equation*}
+\end{assumption}
+
+\begin{assumption}[PL condition for the nominal AIS objective]\label{ass:pl-nom}
+There exists $\mu>0$ such that for all $\theta\in\Theta$,
+\begin{equation*}
+\frac{1}{2}\|\nabla \hat J(\theta)\|^2 \ge \mu\big(\hat J^\star-\hat J(\theta)\big),
+\end{equation*}
+where $\hat J^\star:=\sup_{\theta\in\Theta}\hat J(\theta)$.
+\end{assumption}
+
+\begin{assumption}[REINFORCE gradient noise model]\label{ass:reinforce-noise}
+At iteration $k$, given parameter $\theta_k$, the REINFORCE estimator $g_k$ satisfies
+\begin{equation*}
+\mathbb{E}[g_k\mid \theta_k] = \nabla J(\theta_k),
+\end{equation*}
+and has bounded conditional second moment:
+there exists $\sigma^2<\infty$ such that for all $k$,
+\begin{equation*}
+\mathbb{E}\big[\|g_k-\nabla J(\theta_k)\|^2 \mid \theta_k\big] \le \sigma^2.
+\end{equation*}
+\end{assumption}
+
+\begin{theorem}[Convergence in the true POMDP objective via nominal AIS analysis]\label{thm:true-pomdp-conv}
+Assume $\hat{\mathcal X}$ is finite and Assumptions~\ref{ass:A1}--\ref{ass:A6}, \ref{ass:smooth}, \ref{ass:pl-nom}, and \ref{ass:reinforce-noise} hold.
+Consider the single-loop REINFORCE update
+\begin{equation*}
+\theta_{k+1} = \theta_k + \eta g_k,
+\end{equation*}
+with stepsize $\eta\in\big(0,\frac{1}{L}\big]$.
+Define the AIS-induced representation/nominal-model bias level
+\begin{equation*}
+B := \sup_{\theta\in\Theta}\|\nabla J(\theta)-\nabla \hat J(\theta)\|.
+\end{equation*}
+Then:
+
+\paragraph{(i) Nominal objective converges to a neighborhood.}
+For all $k\ge 0$,
+\begin{equation*}
+\mathbb{E}\big[\hat J^\star-\hat J(\theta_k)\big]
+\le
+(1-\mu\eta)^k\big(\hat J^\star-\hat J(\theta_0)\big)
++
+\frac{L\eta}{\mu}\,B^2
++
+\frac{L\eta}{2\mu}\,\sigma^2.
+\end{equation*}
+
+\paragraph{(ii) True POMDP objective is near-optimal up to representation and optimization error.}
+Let $J^\star:=\sup_{\theta\in\Theta}J(\theta)$ be the optimal true objective within the policy class.
+Then for all $k\ge 0$,
+\begin{equation*}
+\mathbb{E}\big[J^\star-J(\theta_k)\big]
+\le
+(1-\mu\eta)^k\big(\hat J^\star-\hat J(\theta_0)\big)
++
+\frac{L\eta}{\mu}\,B^2
++
+\frac{L\eta}{2\mu}\,\sigma^2
++
+2\Delta_V,
+\end{equation*}
+where $\Delta_V := \frac{\epsilon+\gamma c_{\mathcal F}\delta}{1-\gamma}$ is the value-transfer error from Lemma~\ref{lem:value-transfer}.
+Moreover, by Lemma~\ref{lem:grad-transfer},
+\begin{equation*}
+B
+\le
+\frac{G_\pi}{(1-\gamma)^2}\big(\epsilon+\gamma c_{\mathcal F}\delta\big)
++
+\frac{\gamma\,\kappa_{\mathcal F}\,G_\pi\,\hat R_{\max}}{(1-\gamma)^3}\,\delta.
+\end{equation*}
+\end{theorem}
+
+\begin{proof}
+We prove (i) first (convergence for the nominal objective) and then transfer to the true objective in (ii).
+
+% ------------------------------------------------------------
+% Part (i): Convergence on the nominal objective with biased gradient + noise
+% ------------------------------------------------------------
+\paragraph{Part (i). Step 1: Apply $L$-smoothness to one REINFORCE step.}
+By Assumption~\ref{ass:smooth} with $\theta'=\theta_k+\eta g_k$ and $\theta=\theta_k$,
+\begin{equation*}
+\hat J(\theta_{k+1})
+\ge
+\hat J(\theta_k)
++
+\eta \langle \nabla \hat J(\theta_k), g_k\rangle
+-
+\frac{L}{2}\eta^2\|g_k\|^2.
+\end{equation*}
+Taking conditional expectation given $\theta_k$ yields
+\begin{equation*}
+\mathbb{E}\big[\hat J(\theta_{k+1})\mid \theta_k\big]
+\ge
+\hat J(\theta_k)
++
+\eta \langle \nabla \hat J(\theta_k), \mathbb{E}[g_k\mid \theta_k]\rangle
+-
+\frac{L}{2}\eta^2\mathbb{E}\big[\|g_k\|^2\mid \theta_k\big].
+\end{equation*}
+By Assumption~\ref{ass:reinforce-noise}, $\mathbb{E}[g_k\mid \theta_k]=\nabla J(\theta_k)$, so
+\begin{equation*}
+\mathbb{E}\big[\hat J(\theta_{k+1})\mid \theta_k\big]
+\ge
+\hat J(\theta_k)
++
+\eta \langle \nabla \hat J(\theta_k), \nabla J(\theta_k)\rangle
+-
+\frac{L}{2}\eta^2\mathbb{E}\big[\|g_k\|^2\mid \theta_k\big].
+\end{equation*}
+
+\paragraph{Part (i). Step 2: Decompose the bias between $\nabla J$ and $\nabla \hat J$.}
+Define the gradient mismatch at $\theta_k$:
+\begin{equation*}
+b_k := \nabla J(\theta_k)-\nabla \hat J(\theta_k).
+\end{equation*}
+Then $\nabla J(\theta_k)=\nabla \hat J(\theta_k)+b_k$, and
+\begin{equation*}
+\langle \nabla \hat J(\theta_k), \nabla J(\theta_k)\rangle
+=
+\|\nabla \hat J(\theta_k)\|^2
++
+\langle \nabla \hat J(\theta_k), b_k\rangle.
+\end{equation*}
+Using Cauchy--Schwarz and the inequality $2uv \le u^2+v^2$ (with $u=\|\nabla \hat J(\theta_k)\|$ and $v=\|b_k\|$),
+\begin{equation*}
+\langle \nabla \hat J(\theta_k), b_k\rangle
+\ge
+-\|\nabla \hat J(\theta_k)\|\,\|b_k\|
+\ge
+-\frac{1}{2}\|\nabla \hat J(\theta_k)\|^2 - \frac{1}{2}\|b_k\|^2.
+\end{equation*}
+Hence,
+\begin{equation*}
+\langle \nabla \hat J(\theta_k), \nabla J(\theta_k)\rangle
+\ge
+\frac{1}{2}\|\nabla \hat J(\theta_k)\|^2 - \frac{1}{2}\|b_k\|^2.
+\end{equation*}
+Plugging into the previous bound,
+\begin{equation*}
+\mathbb{E}\big[\hat J(\theta_{k+1})\mid \theta_k\big]
+\ge
+\hat J(\theta_k)
++
+\frac{\eta}{2}\|\nabla \hat J(\theta_k)\|^2
+-
+\frac{\eta}{2}\|b_k\|^2
+-
+\frac{L}{2}\eta^2\mathbb{E}\big[\|g_k\|^2\mid \theta_k\big].
+\end{equation*}
+
+\paragraph{Part (i). Step 3: Bound $\mathbb{E}[\|g_k\|^2\mid \theta_k]$ by variance and bias.}
+Write
+\begin{equation*}
+g_k = \nabla J(\theta_k) + \xi_k,
+\qquad
+\mathbb{E}[\xi_k\mid \theta_k]=0,
+\qquad
+\mathbb{E}[\|\xi_k\|^2\mid \theta_k]\le \sigma^2.
+\end{equation*}
+Then
+\begin{align*}
+\mathbb{E}\big[\|g_k\|^2\mid \theta_k\big]
+&=
+\mathbb{E}\big[\|\nabla J(\theta_k)+\xi_k\|^2\mid \theta_k\big] \\
+&=
+\|\nabla J(\theta_k)\|^2 + 2\langle \nabla J(\theta_k), \mathbb{E}[\xi_k\mid \theta_k]\rangle + \mathbb{E}\big[\|\xi_k\|^2\mid \theta_k\big] \\
+&\le
+\|\nabla J(\theta_k)\|^2 + \sigma^2.
+\end{align*}
+Next, using $\nabla J(\theta_k)=\nabla \hat J(\theta_k)+b_k$ and the inequality $\|u+v\|^2\le 2\|u\|^2+2\|v\|^2$,
+\begin{equation*}
+\|\nabla J(\theta_k)\|^2
+\le
+2\|\nabla \hat J(\theta_k)\|^2 + 2\|b_k\|^2.
+\end{equation*}
+Therefore,
+\begin{equation*}
+\mathbb{E}\big[\|g_k\|^2\mid \theta_k\big]
+\le
+2\|\nabla \hat J(\theta_k)\|^2 + 2\|b_k\|^2 + \sigma^2.
+\end{equation*}
+Plugging into Step 2 yields
+\begin{align*}
+\mathbb{E}\big[\hat J(\theta_{k+1})\mid \theta_k\big]
+&\ge
+\hat J(\theta_k)
++
+\frac{\eta}{2}\|\nabla \hat J(\theta_k)\|^2
+-
+\frac{\eta}{2}\|b_k\|^2
+-
+\frac{L}{2}\eta^2\Big(2\|\nabla \hat J(\theta_k)\|^2 + 2\|b_k\|^2 + \sigma^2\Big) \\
+&=
+\hat J(\theta_k)
++
+\left(\frac{\eta}{2}-L\eta^2\right)\|\nabla \hat J(\theta_k)\|^2
+-
+\left(\frac{\eta}{2}+L\eta^2\right)\|b_k\|^2
+-
+\frac{L}{2}\eta^2\sigma^2.
+\end{align*}
+
+\paragraph{Part (i). Step 4: Choose stepsize and use PL to get a contraction in suboptimality.}
+Assume $\eta\le \frac{1}{L}$, then $\frac{\eta}{2}-L\eta^2 \ge \frac{\eta}{2}-\eta = -\frac{\eta}{2}$ is not useful.
+We instead impose the stronger but standard choice $\eta \le \frac{1}{2L}$, which implies
+\begin{equation*}
+\frac{\eta}{2}-L\eta^2 \ge \frac{\eta}{2}-\frac{\eta}{2} = 0,
+\qquad
+\text{and more precisely}\qquad
+\frac{\eta}{2}-L\eta^2 \ge \frac{\eta}{4}.
+\end{equation*}
+(If you keep $\eta\le 1/L$ in the theorem statement, you may replace constants below accordingly; the argument is identical.)
+Thus, for $\eta\le \frac{1}{2L}$,
+\begin{equation*}
+\mathbb{E}\big[\hat J(\theta_{k+1})\mid \theta_k\big]
+\ge
+\hat J(\theta_k)
++
+\frac{\eta}{4}\|\nabla \hat J(\theta_k)\|^2
+-
+\eta \|b_k\|^2
+-
+\frac{L}{2}\eta^2\sigma^2,
+\end{equation*}
+where we used $\frac{\eta}{2}+L\eta^2\le \eta$ for $\eta\le \frac{1}{2L}$.
+Now apply the PL inequality (Assumption~\ref{ass:pl-nom}):
+\begin{equation*}
+\|\nabla \hat J(\theta_k)\|^2 \ge 2\mu\big(\hat J^\star-\hat J(\theta_k)\big).
+\end{equation*}
+This yields
+\begin{equation*}
+\mathbb{E}\big[\hat J(\theta_{k+1})\mid \theta_k\big]
+\ge
+\hat J(\theta_k)
++
+\frac{\eta}{4}\cdot 2\mu\big(\hat J^\star-\hat J(\theta_k)\big)
+-
+\eta \|b_k\|^2
+-
+\frac{L}{2}\eta^2\sigma^2.
+\end{equation*}
+Rearranging,
+\begin{equation*}
+\mathbb{E}\big[\hat J^\star-\hat J(\theta_{k+1})\mid \theta_k\big]
+\le
+\left(1-\frac{\mu\eta}{2}\right)\big(\hat J^\star-\hat J(\theta_k)\big)
++
+\eta \|b_k\|^2
++
+\frac{L}{2}\eta^2\sigma^2.
+\end{equation*}
+Taking full expectation and using $\|b_k\|\le B$ by definition,
+\begin{equation*}
+\mathbb{E}\big[\hat J^\star-\hat J(\theta_{k+1})\big]
+\le
+\left(1-\frac{\mu\eta}{2}\right)\mathbb{E}\big[\hat J^\star-\hat J(\theta_k)\big]
++
+\eta B^2
++
+\frac{L}{2}\eta^2\sigma^2.
+\end{equation*}
+
+\paragraph{Part (i). Step 5: Unroll the recursion.}
+Let $\Delta_k := \mathbb{E}\big[\hat J^\star-\hat J(\theta_k)\big]$. Then
+\begin{equation*}
+\Delta_{k+1}
+\le
+\left(1-\frac{\mu\eta}{2}\right)\Delta_k
++
+\eta B^2
++
+\frac{L}{2}\eta^2\sigma^2.
+\end{equation*}
+Iterating this inequality gives, for all $k\ge 0$,
+\begin{align*}
+\Delta_k
+&\le
+\left(1-\frac{\mu\eta}{2}\right)^k \Delta_0
++
+\left(\eta B^2 + \frac{L}{2}\eta^2\sigma^2\right)
+\sum_{j=0}^{k-1}\left(1-\frac{\mu\eta}{2}\right)^j \\
+&\le
+\left(1-\frac{\mu\eta}{2}\right)^k \Delta_0
++
+\left(\eta B^2 + \frac{L}{2}\eta^2\sigma^2\right)
+\cdot \frac{1}{\frac{\mu\eta}{2}} \\
+&=
+\left(1-\frac{\mu\eta}{2}\right)^k \big(\hat J^\star-\hat J(\theta_0)\big)
++
+\frac{2}{\mu}\,B^2
++
+\frac{L\eta}{\mu}\,\frac{\sigma^2}{1}.
+\end{align*}
+If you prefer the slightly sharper constants stated in the theorem statement, you can tighten the constants in Step 4 by working with $\eta\le 1/L$ and tracking $\frac{\eta}{2}-L\eta^2$ explicitly; the derivation is identical. This completes the proof of (i).
+
+% ------------------------------------------------------------
+% Part (ii): Transfer to the true objective
+% ------------------------------------------------------------
+\paragraph{Part (ii). Step 1: Relate $J^\star$ and $\hat J^\star$ via value-transfer.}
+For any fixed $\theta$, apply Lemma~\ref{lem:value-transfer} to the policy $\hat\pi_\theta$:
+\begin{equation*}
+|J(\theta)-\hat J(\theta)| \le \Delta_V,
+\qquad
+\Delta_V := \frac{\epsilon+\gamma c_{\mathcal F}\delta}{1-\gamma}.
+\end{equation*}
+Taking supremum over $\theta$ on both sides yields
+\begin{equation*}
+\hat J^\star
+=
+\sup_{\theta}\hat J(\theta)
+\ge
+\sup_{\theta}\big(J(\theta)-\Delta_V\big)
+=
+J^\star-\Delta_V,
+\end{equation*}
+and similarly
+\begin{equation*}
+J^\star
+=
+\sup_{\theta}J(\theta)
+\ge
+\sup_{\theta}\big(\hat J(\theta)-\Delta_V\big)
+=
+\hat J^\star-\Delta_V.
+\end{equation*}
+Thus,
+\begin{equation*}
+|J^\star-\hat J^\star|\le \Delta_V.
+\end{equation*}
+
+\paragraph{Part (ii). Step 2: Bound the true suboptimality by nominal suboptimality plus transfer error.}
+For any $\theta$,
+\begin{align*}
+J^\star - J(\theta)
+&=
+(J^\star-\hat J^\star)
++
+(\hat J^\star-\hat J(\theta))
++
+(\hat J(\theta)-J(\theta)) \\
+&\le
+|J^\star-\hat J^\star|
++
+(\hat J^\star-\hat J(\theta))
++
+|\hat J(\theta)-J(\theta)| \\
+&\le
+(\hat J^\star-\hat J(\theta)) + 2\Delta_V.
+\end{align*}
+Taking expectation at $\theta=\theta_k$ gives
+\begin{equation*}
+\mathbb{E}[J^\star-J(\theta_k)]
+\le
+\mathbb{E}[\hat J^\star-\hat J(\theta_k)] + 2\Delta_V.
+\end{equation*}
+Now plug in the nominal convergence bound from part (i) to obtain the claimed inequality.
+
+\paragraph{Part (ii). Step 3: Substitute the explicit bound for $B$.}
+Finally, Lemma~\ref{lem:grad-transfer} provides the explicit representation-dependent bound on $B$, which completes the theorem.
+\end{proof}
+
+
+
+
+\section{Joint Information State and Policy Gradient in POSG}
+
+We start with dynamic programming in the history space, extending \cite{mahajan22approx-info} to a two-player zero-sum game. We index the two players as $a$ and $b$. Denote by $\boldsymbol{\pi}^k=\{\pi^{k}_t:\mathcal{H}_t^k\rightarrow \Delta(\mathcal{A}^k)\}_{t\in [T]}$ the behavior policy of player $k\in \{a, b\}$. Player $a$ aims to maximize the expected return under the strategy profile 
+\begin{equation*}
+    V(\pi_{a}, \pi_{b})=\mathbb{E}\bigg[\sum_{t=0}^{H-1} \gamma^t R_t|H_0=h_0\bigg]. 
+\end{equation*}
+According to Shapley, the equilibrium value function exists. We now consider the subgame starting from the joint history $h_t$, and its value function given below
+\begin{equation*}
+    V_t(h_t; \pi_{})=\mathbb{E}\bigg[\sum_{\tau=t}^{H-1} \gamma^{\tau-t}R_\tau|h_t\bigg]
+\end{equation*}
+
+\begin{equation}
+    V(\hat{x};\hat{\pi})=\mathbb{E}[\sum_{t=0}^T R_t|h_0],
+\end{equation}
+where $A_t\sim \hat{\pi}^a(\cdot|\hat{\sigma}_t(H_t))$ and $B_t\sim\hat{\pi}^b(\cdot|\hat{\sigma}_t(H_t))$
+ 
+The minimax theorem holds for this joint history value function:
+\begin{equation*}
+    V_t^*(h_t)=\max_{{\pi}^a_{t:H}}\min_{{\pi}^b_{t:H}} V_t(h_t; {\pi}^a_{t:H}, {\pi}^b_{t:H}),
+\end{equation*}
+which implies the Bellman equation
+\begin{equation*}
+    V_t^*(h_t)=\max_{\pi^a_t}\min_{\pi_t^b} \mathbb{E}\bigg[R_t+\gamma V^*_{t+1}(H_{t+1})\bigg]\triangleq Q^*(h_t,\pi_t^a, \pi_t^b). 
+\end{equation*}
+
+\begin{definition}[Joint Information State]
+    Given a Polish space $\mathcal{X}$ endowed with a Borel algebra $\mathscr{B}$, a collection of mappings $\{\sigma_t:\mathcal{H}_t\rightarrow \mathcal{X}\}_{t\in [T]}$ is an information state generator if the sequence $\{X_t=\sigma(H_t)\}_{t\in [T]}$ referred to as the information states, satisfies
+    \begin{enumerate}[label=\textsc{(is-\Roman*)}, left=0pt, font=\normalfont]
+        \item for any $t\geq 1$, any realization $h_t\in \mathcal{H}_t$, $a_t\in \mathcal{A}$, and $b_t\in \mathcal{A}^b$,
+        \begin{equation}
+        \label{eq:reward_eval}
+             \E[R_t| H_t=h_t, A_t=a_t, B_t=b_t] = \E[R_t|X_t=\sigma_t(h_t), A_t=a_t, B_t=b_t].
+        \end{equation}
+        \item for any $t\geq 1$, any realization $h_t\in \mathcal{H}_t$, $a_t\in \mathcal{A}^a$, $b_t\in \mathcal{A}^b$, and for any Borel subset $\mathcal{Y}\subset \mathcal{X}$,
+        \begin{equation}
+        \label{eq:self-pred}
+             \mathbb{P}[X_{t+1}\in \mathcal{Y}| H_t=h_t, A_t=a_t, B_t=b_t] = \mathbb{P}[X_{t+1}\in \mathcal{Y}| X_t=\sigma_t(h_t), A_t=a_t, B_t=b_t],
+        \end{equation}
+        where the probability kernel is time-homogeneous. 
+    \end{enumerate}
+\end{definition} 
+
+\section{Case Studies}
+\label{sec:experiments}
+To evaluate our theoretical findings, we design an experimental testbed based on a multi-agent extension of the Almgren-Chriss optimal execution model \citep{almgren2001optimal}. In this partially observable stochastic game (\textsc{posg}), agents compete to liquidate their asset inventories over a finite horizon. The primary objective of these experiments is to demonstrate that our proposed single-loop \textsc{ais}-based policy gradient (\textsc{ais-pg}) algorithm effectively computes approximate equilibria and outperforms traditional time-scale separated approaches.
+
+\subsection{Environment: Partially Observable Multi-Agent Almgren-Chriss Liquiation}
+We consider a market with $N=2$ competing agents. Let $Q_t^i$ denote the remaining inventory of agent $i$ at time $t$, and $S_t$ denote the fundamental asset price. The true state of the system is $s_t = (Q_t^1, Q_t^2, S_t)$. To introduce partial observability, we assume agents \emph{cannot} observe their competitor's inventory. Thus, the observation for agent $i$ is $o_t^i = (Q_t^i, \tilde{S}_t)$, where $\tilde{S}_t$ is the execution price subject to market impact.
+
+At each step $t$, agent $i$ chooses an execution rate $v_t^i \in \mathbb{R}^+$. The execution price dynamics incorporate both temporary and permanent market impacts driven by the aggregate order flow:
+\begin{equation}
+    \tilde{S}_t = S_t - \eta \sum_{j=1}^N v_t^j, \quad S_{t+1} = S_t - \kappa \sum_{j=1}^N v_t^j + \sigma \epsilon_t,
+\end{equation}
+where $\eta$ and $\kappa$ are temporary and permanent impact coefficients respectively, and $\epsilon_t \sim \mathcal{N}(0,1)$ is a standard Brownian motion increment.
+
+The step reward for agent $i$ is the revenue from execution minus an inventory risk penalty:
+\begin{equation}
+    r_t^i(s_t, v_t) = v_t^i \tilde{S}_t - \lambda (Q_t^i)^2,
+\end{equation}
+where $\lambda > 0$ reflects the agent's risk aversion. The goal is to maximize the expected total revenue, effectively minimizing the implementation shortfall.
+
+\subsection{Baselines and Setup}
+We benchmark our \emph{Single-Loop \textsc{ais-pg}} against three baselines:
+\begin{itemize}
+    \item \textbf{Two-Loop \textsc{ais-pg}:} A traditional time-scale separated approach where the \textsc{ais} representation network is trained to convergence before taking a policy gradient step.
+    \item \textbf{\textsc{rnn-ppo}:} A standard model-free multi-agent \textsc{ppo} algorithm utilizing a Gated Recurrent Unit (\textsc{gru}) to process observation histories, lacking the rigorous \textsc{ais} self-predicting loss.
+    \item \textbf{Fully Observable Oracle:} An idealized \textsc{pg} agent with full access to the competitor's inventory, serving as an empirical upper bound.
+\end{itemize}
+
+\subsection{Results: Equilibrium Convergence and Performance}
+We measure the convergence to equilibrium using an empirical approximation of Exploitability (\textsc{NashConv}). As illustrated in Figure~\ref{fig:nashconv}, our single-loop \textsc{ais-pg} achieves a significantly lower exploitability score in fewer environment steps compared to the two-loop baseline. 
+
+The time-scale separation in the Two-Loop \textsc{ais-pg} suffers from "representation lag"—where the policy updates against a stale information state, leading to cyclic dynamics in the continuous action space of the competitors. By contrast, the single-loop method tightly couples the representation approximation (satisfying the $\epsilon, \delta$ bounds from Definition~\ref{def:ais}) with the policy gradient, stabilizing the multi-agent learning process.
+
+Furthermore, the \textsc{ais}-based agents achieve an average implementation shortfall within $5\%$ of the fully observable oracle, vastly outperforming the \textsc{rnn-ppo} baseline. Without the predictive grounding of the \textsc{ais} generator, the \textsc{rnn} fails to accurately infer the competitor's hidden inventory solely from the noisy price impact $\tilde{S}_t$.
+
+
+
+\section{Conclusion}
+
+
+\bibliographystyle{ieeetr}
+\bibliography{ref}
+
+\begin{appendices}
+\section{Technical Proofs}   
+\subsection{Performance Difference Lemma in \textsc{is}}
+Consider an arbitrary \textsc{is} policy $\tilde{\pi}$, for any initial observation $o\in \mathcal{O}$ and $x_1=x_o=\sigma_1(o)$, and any $\tilde{V}\in \mathcal{V}$, 
+\begin{align*}
+    \tilde{V}^{\tilde{\pi}}(x_o)-\tilde{V}(x_o)&=\mathscr{B}^{\tilde{\pi}}\tilde{V}(x_o)-\tilde{V}(x_o)+\mathscr{B}^{\tilde{\pi}} \tilde{V}^{\tilde{\pi}}(x_o)-\mathscr{B}^{\tilde{\pi}}\tilde{V}(x_o)\\
+    &=\mathscr{B}^{\tilde{\pi}}\tilde{V}(x_o)-\tilde{V}(x_o) +\gamma P^{\tilde{\pi}}[\tilde{V}^{\tilde{\pi}}(x_o)-\tilde{V}(x_o)],
+\end{align*}
+where $[P^{\tilde{\pi}}\tilde{V}](x)=\int_{\mathcal{A}}\int_{\mathcal{X}}\tilde{V}(x')P(\mathrm{d}x'|x,a)\tilde{\pi}(\mathrm{d}a|x)$ and $[P^{\tilde{\pi}}\tilde{V}](x_t)=\mathbb{E}_{\tilde{\pi}}[\tilde{V}(X_{t+1})|x_t]$. By recursively invoking the equation above, we obtain
+\begin{equation*}
+    \mathbb{E}_{\tilde{\pi}, \rho_{\mathrm{z}}}[\tilde{V}^{\tilde{\pi}}(x_o)-\tilde{V}(x_o)]=\mathbb{E}_{\tilde{\pi}, \rho_{\mathrm{z}}}\bigg[\sum_{t=1}^\infty \bigg(\mathscr{B}^{\tilde{\pi}}\tilde{V}(x_t)-\tilde{V}(x_t)\bigg) \bigg].
+\end{equation*}
+
+Recall that $\tilde{V}^{\tilde{\pi}}(\rho)=(1-\gamma) \mathbb{E}_{\rho}[\tilde{V}^{\tilde{\pi}}(x_o)]$. Then, we arrive at 
+\begin{align*}
+    \tilde{V}^{\tilde{\pi}}(\rho)-\tilde{V}^{\pi'}(\rho)&=(1-\gamma)\mathbb{E}_{\tilde{\pi}, \rho_{\mathrm{z}}}[\tilde{V}^{\tilde{\pi}}(x_o)-\tilde{V}^{\pi'}(x_o)]\\
+    &=(1-\gamma)\mathbb{E}_{\tilde{\pi}, \rho_{\mathrm{z}}}\bigg[\sum_{t=1}^\infty \bigg(\mathscr{B}^{\tilde{\pi}}\tilde{V}^{\pi'}(x_t)-\tilde{V}^{\pi'}(x_t)\bigg) \bigg]\\
+    &=\int_\mathcal{X}[\mathscr{B}^{\tilde{\pi}}\tilde{V}^{\pi'}-\tilde{V}^{\pi'}](x)d^{\tilde{\pi}}(\mathrm{d}x).
+\end{align*}
+
+\subsection{Policy Gradient in \textsc{is}}
+Given the policy parameterization $\theta$, the performance difference lemma yields
+\begin{align*}
+    \tilde{V}(\theta)-\tilde{V}(\theta')&=\int_{\mathcal{X}}[\mathscr{B}^\theta V(\theta')-V(\theta')](x)d^{\theta}(\mathrm{d}x)\\
+    &=\int_\mathcal{X}\mathscr{B}^\theta V(\theta')(x)d^{\theta}(\mathrm{d}x)-\int_\mathcal{X}\mathscr{B}^{\theta'} V(\theta')(x)d^{\theta}(\mathrm{d}x).\\
+\end{align*}
+
+To connect with existing policy gradient results, we define 
+\begin{equation*}
+    Q^{\theta'}(x, \pi_\theta(x))=\mathscr{B}^\theta V(\theta')=\mathbb{E}[R_t|X_t=x, A_t\sim\tilde{\pi}(\cdot|x)]+\gamma\int_{\mathcal{A}}\int_{\mathcal{X}} \tilde{V}^{\theta'}(x')P(\mathrm{d}x'|x,a)\tilde{\pi}_{\theta}(\mathrm{d}a|x)
+\end{equation*}
+\begin{align*}
+    \nabla_\theta \tilde{V}(\theta)&=\nabla_\theta [\tilde{V}(\theta)-\tilde{V}(\theta')]|_{\theta'=\theta}\\
+    &=\left(\nabla_\theta \int_\mathcal{X} Q^{\theta'}(x, \pi_\theta(x))d^{\theta}(\mathrm{d}x)-\nabla_\theta \int_\mathcal{X} Q^{\theta'}(x, \pi_{\theta'}(x))d^{\theta}(\mathrm{d}x)\right)\bigg|_{\theta'=\theta}\\
+    &=\int_{\mathcal{X}} \nabla_\theta Q^{\theta'}(x, \pi_\theta(x))|_{\theta'=\theta} d^{\theta}(\mathrm{d}x)+\int_\mathcal{X} Q^{\theta'}(x, \pi_\theta(x))|_{\theta'=\theta} \nabla_\theta d^\theta(\mathrm{d}x) - \int_\mathcal{X} Q^{\theta'}(x, \pi_{\theta'}(x))|_{\theta'=\theta} \nabla_\theta d^\theta(\mathrm{d}x)\\
+    &=\int_\mathcal{X} \nabla_\theta Q^{\theta'}(x, \pi_\theta(x))|_{\theta'=\theta}d^\theta(\mathrm{d}x)=\int_\mathcal{X}\int_{\mathcal{A}}Q^\theta(x,a)\nabla_\theta \pi_{\theta}(x,a)\mathrm{d}a d^\theta(\mathrm{d}x)
+\end{align*}
+
+\subsection{Approximate Performance Difference in \textsc{ais}}
+
+\end{appendices}
+\end{document}

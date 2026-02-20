@@ -1,12 +1,15 @@
 """Main entry point for multi-agent training."""
 
 import argparse
+from pathlib import Path
 import sys
 import torch
 import numpy as np
 
-# Add lib to path
-sys.path.insert(0, '/home/union/quant/RLC2026')
+# Add project root to import path
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from lib.grid import competitive_envs, cooperatifve_envs, pursuit_evasion
 
@@ -18,14 +21,10 @@ from info_states import (
     AutoencoderTransformerInfoState,
 )
 from pg_agents import REINFORCEAgent, A2CAgent, PPOAgent
-from pg_agents.mappo import MAPPOAgent
-from pg_agents.qmix import QMIXAgent
-from training import MultiAgentTrainer, ReplayBuffer
+from training import MultiAgentTrainer
 from config import (
     Config,
     get_default_config,
-    get_competitive_fourrooms_config,
-    get_pursuit_evasion_config,
 )
 
 
@@ -83,12 +82,14 @@ def create_env(config: Config):
 
     # Pursuit-Evasion
     elif env_name == 'pursuit_evasion':
-        env = pursuit_evasion.pursuit_evasion_env(
+        env = pursuit_evasion.env(
             width=config.env.width,
             height=config.env.height,
             n_pursuers=config.env.n_agents - 1,
             view_radius=config.env.view_radius,
             max_steps=config.env.max_steps,
+            wall_density=config.env.wall_density,
+            render_mode=config.env.render_mode,
         )
     else:
         raise ValueError(f"Unknown environment: {env_name}")
@@ -201,7 +202,7 @@ def create_agent(config: Config, obs_space, action_space, device: str):
 
     else:
         raise ValueError(f"Unknown agent type: {agent_config.type}. "
-                        f"Available: reinforce, a2c, ppo, mappo, qmix")
+                        f"Available: reinforce, a2c, ppo")
 
     return agent.to(device)
 
@@ -256,11 +257,6 @@ def main(args):
         config.agent.lr = 1e-3
         config.training.update_freq = 1
         config.training.n_episodes = 3000
-    elif args.algo in ['mappo', 'qmix']:
-        config.agent.lr = 5e-4
-        config.training.update_freq = 20
-        config.training.n_episodes = 5000
-
     # Override with command line args
     if args.episodes is not None:
         config.training.n_episodes = args.episodes
@@ -369,7 +365,7 @@ if __name__ == '__main__':
 
     # Algorithm selection
     parser.add_argument('--algo', '--algorithm', type=str, default='a2c',
-                        choices=['reinforce', 'a2c', 'ppo', 'mappo', 'qmix'],
+                        choices=['reinforce', 'a2c', 'ppo'],
                         help='RL algorithm to use')
 
     # Deprecated config argument (for backward compatibility)

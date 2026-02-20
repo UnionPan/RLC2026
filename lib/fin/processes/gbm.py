@@ -62,9 +62,12 @@ class GBM(DriftDiffusionProcess):
 
     def _exact_simulation(self, X0, T, dt, t_grid, config):
         """
-        Exact simulation using analytical solution
+        Exact simulation using incremental Brownian motion.
 
-        S_t = S_0 * exp((mu - sigma^2/2)*t + sigma*W_t)
+        For GBM: S_{t+dt} = S_t * exp((mu - sigma^2/2)*dt + sigma*sqrt(dt)*Z)
+        where Z ~ N(0,1) is independent for each increment.
+
+        This is exact because GBM has the multiplicative property.
         """
         n_paths = config.n_paths
         if config.antithetic:
@@ -73,30 +76,29 @@ class GBM(DriftDiffusionProcess):
         paths = np.zeros((len(t_grid), n_paths, self.dim))
         paths[0] = X0
 
+        # Pre-compute drift per step (constant for uniform grid)
+        drift_per_step = (self.mu - 0.5 * self.sigma**2) * dt
+        vol_sqrt_dt = self.sigma * np.sqrt(dt)
+
         for i in range(1, len(t_grid)):
-            t = t_grid[i]
+            # Independent increment Z for this step
             Z = np.random.normal(0, 1, size=(n_paths, self.dim))
 
-            drift_term = (self.mu - 0.5 * self.sigma**2) * t
-            diffusion_term = self.sigma * np.sqrt(t) * Z
-
-            paths[i] = X0 * np.exp(drift_term + diffusion_term)
+            # Evolve from previous state (not from X0!)
+            paths[i] = paths[i-1] * np.exp(drift_per_step + vol_sqrt_dt * Z)
 
         if config.antithetic:
             paths_anti = np.zeros((len(t_grid), n_paths, self.dim))
             paths_anti[0] = X0
 
+            # Reset random state to get same Z values (then negate)
             if config.random_seed is not None:
                 np.random.seed(config.random_seed)
 
             for i in range(1, len(t_grid)):
-                t = t_grid[i]
-                Z = -np.random.normal(0, 1, size=(n_paths, self.dim))
-
-                drift_term = (self.mu - 0.5 * self.sigma**2) * t
-                diffusion_term = self.sigma * np.sqrt(t) * Z
-
-                paths_anti[i] = X0 * np.exp(drift_term + diffusion_term)
+                # Use negated Z for antithetic paths
+                Z = np.random.normal(0, 1, size=(n_paths, self.dim))
+                paths_anti[i] = paths_anti[i-1] * np.exp(drift_per_step - vol_sqrt_dt * Z)
 
             paths = np.concatenate([paths, paths_anti], axis=1)
 

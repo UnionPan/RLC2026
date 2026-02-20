@@ -526,3 +526,7 @@ def env(**kwargs):
 
 
 parallel_env = parallel_wrapper_fn(env)
+
+# Backward-compatible aliases used in older scripts.
+pursuit_evasion_env = env
+parallel_pursuit_evasion_env = parallel_env

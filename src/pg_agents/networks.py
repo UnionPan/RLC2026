@@ -210,3 +210,24 @@ class ActorCriticNetwork(nn.Module):
         log_probs = dist.log_prob(actions)
         entropy = dist.entropy()
         return log_probs, value, entropy
+
+
+class QNetwork(nn.Module):
+    """Q-network for discrete action spaces."""
+
+    def __init__(self, state_dim: int, n_actions: int, hidden_dim: int = 128):
+        super().__init__()
+        self.state_dim = state_dim
+        self.n_actions = n_actions
+
+        self.net = nn.Sequential(
+            nn.Linear(state_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, n_actions),
+        )
+
+    def forward(self, state: torch.Tensor) -> torch.Tensor:
+        """Return Q-values for all actions."""
+        return self.net(state)

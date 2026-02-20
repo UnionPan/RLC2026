@@ -6,7 +6,7 @@
 # Arguments:
 #   ENVIRONMENT: competitive_fourrooms, competitive_obstructedmaze,
 #                cooperative_keycorridor, cooperative_lavacrossing, pursuit_evasion
-#   ALGORITHM:   reinforce, a2c, ppo, mappo, qmix
+#   ALGORITHM:   reinforce, a2c, ppo
 #   CONFIG:      quick, standard, long (optional, default: standard)
 
 set -e  # Exit on error
@@ -28,7 +28,7 @@ if [[ ! " $VALID_ENVS " =~ " $ENV " ]]; then
 fi
 
 # Validate algorithm
-VALID_ALGOS="reinforce a2c ppo mappo qmix"
+VALID_ALGOS="reinforce a2c ppo"
 if [[ ! " $VALID_ALGOS " =~ " $ALGO " ]]; then
     echo "Error: Invalid algorithm '$ALGO'"
     echo "Valid algorithms: $VALID_ALGOS"
@@ -105,49 +105,6 @@ elif [ "$ALGO" = "ppo" ]; then
     GAMMA=0.99
     ENTROPY_COEF=0.01
 
-# MAPPO config (for cooperative tasks)
-elif [ "$ALGO" = "mappo" ]; then
-    case "$CONFIG_PRESET" in
-        quick)
-            EPISODES=200
-            LR=5e-4
-            UPDATE_FREQ=10
-            ;;
-        standard)
-            EPISODES=5000
-            LR=5e-4
-            UPDATE_FREQ=20
-            ;;
-        long)
-            EPISODES=10000
-            LR=3e-4
-            UPDATE_FREQ=20
-            ;;
-    esac
-    GAMMA=0.99
-    ENTROPY_COEF=0.01
-
-# QMIX config (for cooperative tasks)
-elif [ "$ALGO" = "qmix" ]; then
-    case "$CONFIG_PRESET" in
-        quick)
-            EPISODES=200
-            LR=5e-4
-            UPDATE_FREQ=10
-            ;;
-        standard)
-            EPISODES=5000
-            LR=5e-4
-            UPDATE_FREQ=20
-            ;;
-        long)
-            EPISODES=10000
-            LR=3e-4
-            UPDATE_FREQ=20
-            ;;
-    esac
-    GAMMA=0.99
-    ENTROPY_COEF=0.01
 fi
 
 # =============================================================================
